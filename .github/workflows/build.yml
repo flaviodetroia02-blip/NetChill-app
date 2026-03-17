@@ -1,4 +1,4 @@
-name: Costruisci APK
+name: Costruisci APK (Zero Code)
 on:
   workflow_dispatch:
 
@@ -14,13 +14,26 @@ jobs:
         with:
           node-version: 20
 
-      - name: Installa EAS (Il costruttore)
+      - name: Configura Java (Serve per Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Installa EAS
         run: npm install -g eas-cli
 
       - name: Installa pacchetti
         run: npm install
 
-      - name: Crea la Build Android (APK)
-        run: eas build -p android --profile preview --non-interactive
+      - name: Crea APK saltando Expo
+        run: eas build -p android --profile preview --local --output ./netchill.apk
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_NO_VCS: 1
+
+      - name: Salva l'APK per il download
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetChill-App
+          path: ./netchill.apk
