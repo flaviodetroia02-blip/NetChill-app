@@ -7,21 +7,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Controlla il codice
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configura Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18.x
+          node-version: 20
 
-      - name: Installa Expo
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Installa EAS (Il costruttore)
+        run: npm install -g eas-cli
 
       - name: Installa pacchetti
         run: npm install
 
       - name: Crea la Build Android (APK)
         run: eas build -p android --profile preview --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
