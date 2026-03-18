@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
-import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -32,7 +31,6 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   
   const [targetUrl, setTargetUrl] = useState('');
-  const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
   
   // STATO PER IL DOMINIO AUTOMATICO
@@ -40,7 +38,7 @@ export default function App() {
 
   const webViewRef = useRef(null);
   
-  // REFS PER LA MEMORIA
+  // REFS PER IL SALVATAGGIO DEL MINUTO
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
@@ -54,8 +52,6 @@ export default function App() {
   
   const LETTERS = "NETCHILL".split("");
   const letterAnims = useRef(LETTERS.map(() => new Animated.Value(0))).current;
-
-  const player = useVideoPlayer(videoUrl, p => { if (videoUrl) p.play(); });
 
   useEffect(() => {
     fetchRemoteLink(); 
@@ -74,7 +70,7 @@ export default function App() {
         setStreamingDomain(linkPulito);
       }
     } catch (error) {
-      console.log("Uso dominio di base, file Github non trovato ancora.");
+      console.log("Uso dominio base, file Github non letto.");
     }
   };
 
@@ -139,18 +135,13 @@ export default function App() {
       let currentHistory = [...continueWatching];
       const existing = currentHistory.find(x => x.id === item.id);
       
-      const progressToSave = existing ? existing.progress : 0;
-      const durationToSave = existing ? existing.duration : 0;
-      const lastUrlToSave = existing ? existing.lastUrl : null; 
-
       currentHistory = currentHistory.filter(x => x.id !== item.id);
       const newItem = {
         id: item.id,
         title: item.title || item.name,
         poster_path: item.poster_path,
-        progress: progressToSave,
-        duration: durationToSave,
-        lastUrl: lastUrlToSave
+        progress: existing ? existing.progress : 0,
+        duration: existing ? existing.duration : 0,
       };
       
       const updatedList = [newItem, ...currentHistory].slice(0, 10);
@@ -158,9 +149,7 @@ export default function App() {
       await AsyncStorage.setItem('@continue_watching', JSON.stringify(updatedList));
       
       setCurrentMovie(newItem);
-
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
-      setTargetUrl(finalUrl);
+      setTargetUrl(`${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`);
     } catch (e) { console.error(e); }
   };
 
@@ -194,11 +183,48 @@ export default function App() {
     setLoading(false);
   };
 
+  // --- INIEZIONE CSS: EFFETTO APP NATIVA AL 100% ---
   const cssBase = `
-    header, .logo, .navbar, .header-wrapper, footer { display: none !important; }
-    [alt*="Streaming"], [alt*="Community"] { display: none !important; }
-    body { background-color: #000000 !important; color: white !important; }
-    .adsbygoogle, .ad-container, [id*="banner"], .popup-overlay { display: none !important; }
+    header, footer, nav, aside, .navbar, .header-wrapper, .logo, 
+    #header, #footer, .comments, .sidebar, .related-movies, .social-share,
+    [class*="ad-"], [id*="banner"], iframe[src*="ads"], .cookie-consent { 
+      display: none !important; 
+    }
+    
+    [alt*="Streaming"], [alt*="Community"], a[href*="streamingcommunity"] { 
+      display: none !important; 
+    }
+    
+    html, body { 
+      background-color: #000000 !important; 
+      color: #FFFFFF !important; 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; 
+      margin: 0 !important; 
+      padding: 0 !important; 
+      width: 100vw !important;
+      height: 100vh !important; 
+      overflow: hidden !important; 
+      -webkit-tap-highlight-color: transparent !important; 
+      -webkit-touch-callout: none !important; 
+      user-select: none !important; 
+    }
+    
+    .container, .main-content, #main, .video-wrapper, .player-container, #player {
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      border: none !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      background-color: #000000 !important;
+    }
+
+    ::-webkit-scrollbar {
+      display: none !important;
+    }
   `;
 
   const cssTV = Platform.isTV ? `
@@ -210,6 +236,7 @@ export default function App() {
       z-index: 9999 !important;
       box-shadow: 0px 0px 15px #E50914 !important;
       background-color: rgba(229, 9, 20, 0.1) !important;
+      border-radius: 8px !important;
     }
   ` : "";
 
@@ -220,16 +247,19 @@ export default function App() {
       style.innerHTML = \`${cssBase} ${cssTV}\`;
       document.head.appendChild(style);
 
+      /* IL TRUCCO DEL FANTASMA: Neutralizza i popup invisibili */
+      window.open = function(url) { 
+        return { closed: true }; 
+      };
+
       ${Platform.isTV ? `
         setTimeout(() => {
           document.querySelectorAll('a, button, .poster, .film-item, video, iframe').forEach(el => el.setAttribute('tabindex', '0'));
         }, 2000);
       ` : ""}
 
-      window.open = function() { return null; };
-      
+      /* IL CRONOMETRO SILENZIOSO: Salva il minuto esatto del video */
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
-      let currentUrl = location.href;
       let hasSeeked = (initialSavedTime < 5);
       let lastSaved = 0;
 
@@ -256,12 +286,6 @@ export default function App() {
         }, 500);
 
         v.addEventListener('timeupdate', () => {
-          if (location.href !== currentUrl) {
-            currentUrl = location.href;
-            hasSeeked = true; 
-            initialSavedTime = 0;
-          }
-
           if (hasSeeked && v.currentTime > 0 && !v.paused) {
             if (Math.abs(v.currentTime - lastSaved) > 5) {
               lastSaved = v.currentTime;
@@ -269,8 +293,7 @@ export default function App() {
                 window.ReactNativeWebView.postMessage(JSON.stringify({ 
                   type: 'TIME_UPDATE', 
                   time: v.currentTime, 
-                  duration: v.duration || 0,
-                  url: location.href
+                  duration: v.duration || 0
                 }));
               } catch(e) {}
             }
@@ -281,6 +304,7 @@ export default function App() {
       setInterval(() => {
         document.querySelectorAll('video').forEach(attachToVideo);
       }, 1000);
+
     })();
     true;
   `;
@@ -377,6 +401,7 @@ export default function App() {
               {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 50}} /> : (
                 <View style={styles.content}>
                   
+                  {/* RIGA CONTINUA A GUARDARE */}
                   {continueWatching.length > 0 && !selectedGenre && (
                     <Row title="Continua a guardare" data={continueWatching} onPlay={startPlaying} isHistory myList={myList} onToggleList={toggleMyList} />
                   )}
@@ -414,9 +439,8 @@ export default function App() {
             <TouchableOpacity onPress={() => webViewRef.current?.goBack()}>
               <Text style={styles.barLink}>← INDIETRO</Text>
             </TouchableOpacity>
-            <Text style={styles.barTitle}>SHIELD ATTIVO 🛡️</Text>
             <TouchableOpacity onPress={() => { setTargetUrl(''); setCurrentMovie(null); }}>
-              <Text style={styles.barLink}>CHIUDI</Text>
+              <Text style={styles.barLink}>CHIUDI VIDEO</Text>
             </TouchableOpacity>
           </View>
           
@@ -425,12 +449,12 @@ export default function App() {
             source={{ uri: targetUrl }}
             injectedJavaScript={dynamicJS}
             injectedJavaScriptForMainFrameOnly={false} 
-            style={{ flex: 1 }}
+            style={{ flex: 1, backgroundColor: '#000000' }}
             allowsInlineMediaPlayback={true}
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
-            
             onMessage={async (e) => {
+              // RICEZIONE DEL MINUTO ESATTO SALVATO DAL SITO
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
                 if (msg.type === 'TIME_UPDATE' && currentMovieRef.current) {
@@ -439,11 +463,6 @@ export default function App() {
                   if (idx > -1) {
                     currentList[idx].progress = msg.time;
                     currentList[idx].duration = msg.duration;
-                    
-                    if (msg.url && msg.url.includes('streamingcommunity')) {
-                      currentList[idx].lastUrl = msg.url;
-                    }
-                    
                     setContinueWatching(currentList);
                     await AsyncStorage.setItem('@continue_watching', JSON.stringify(currentList));
                   }
@@ -462,19 +481,19 @@ const Row = ({ title, data, onPlay, isHistory, myList = [], onToggleList }) => (
     <Text style={styles.rowTitle}>{title}</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
       {data.map(item => {
-        const progressPercent = item.duration > 0 ? (item.progress / item.duration) * 100 : 0;
         const inList = myList.find(x => x.id === item.id);
+        const progressPercent = item.duration > 0 ? (item.progress / item.duration) * 100 : 0;
         
         return (
           <TouchableOpacity key={item.id} style={styles.card} onPress={() => onPlay(item)}>
             <View>
               <Image source={{ uri: item.poster_path ? BASE_IMAGE_URL + item.poster_path : 'https://via.placeholder.com/150x225' }} style={[styles.cardImg, isHistory && {borderBottomLeftRadius: 0, borderBottomRightRadius: 0}]} />
-              
               <TouchableOpacity style={styles.overlayAddBtn} onPress={() => onToggleList(item)}>
                 <Text style={{color: 'white', fontWeight: 'bold'}}>{inList ? '✓' : '+'}</Text>
               </TouchableOpacity>
-
-              {isHistory && (
+              
+              {/* BARRA ROSSA DI AVANZAMENTO DEL FILM */}
+              {isHistory && item.duration > 0 && (
                 <View style={styles.progressContainer}>
                   <View style={[styles.progressBar, { width: `${progressPercent}%` }]} />
                 </View>
@@ -516,6 +535,5 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
   searchGrid: { padding: 10 },
   browserBar: { backgroundColor: '#111', padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  barLink: { color: '#E50914', fontWeight: 'bold', fontSize: 12 },
-  barTitle: { color: '#444', fontSize: 10, fontWeight: 'bold' }
+  barLink: { color: '#E50914', fontWeight: 'bold', fontSize: 12 }
 });
