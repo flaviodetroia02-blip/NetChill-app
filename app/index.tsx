@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-// IMPORTANTE: Ho aggiunto "Platform" qui sotto per il sensore TV/Telefono
 import { ActivityIndicator, Animated, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -10,7 +9,6 @@ import { WebView } from 'react-native-webview';
 const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
-// Rimosso STREAMING_DOMAIN fisso, ora lo prende dal file txt!
 
 const GENRES = [
   { id: null, name: 'Tutti' },
@@ -60,13 +58,12 @@ export default function App() {
   const player = useVideoPlayer(videoUrl, p => { if (videoUrl) p.play(); });
 
   useEffect(() => {
-    fetchRemoteLink(); // Cerca il link aggiornato all'avvio
+    fetchRemoteLink(); 
     startCinematicSplash();
     fetchHomeData();
     loadUserData();
   }, []);
 
-  // --- NOVITÀ: LETTURA LINK DA GITHUB ---
   const fetchRemoteLink = async () => {
     try {
       const urlSegreto = 'https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt';
@@ -162,7 +159,6 @@ export default function App() {
       
       setCurrentMovie(newItem);
 
-      // USA IL DOMINIO AGGIORNATO DA GITHUB
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
     } catch (e) { console.error(e); }
@@ -198,19 +194,14 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- NOVITÀ: STILI CSS E SENSORE TV ---
   const cssBase = `
-    /* Nascondi header, loghi e menu originali senza rompere il video */
     header, .logo, .navbar, .header-wrapper, footer { display: none !important; }
     [alt*="Streaming"], [alt*="Community"] { display: none !important; }
     body { background-color: #000000 !important; color: white !important; }
-    
-    /* Blocco pubblicità SICURO (non tocca iframe o z-index alti vitali) */
     .adsbygoogle, .ad-container, [id*="banner"], .popup-overlay { display: none !important; }
   `;
 
   const cssTV = Platform.isTV ? `
-    /* Effetto Telecomando stile Netflix SOLO PER TV */
     a:focus, button:focus, input:focus, [tabindex]:focus, .video-item:focus {
       outline: 4px solid #E50914 !important;
       outline-offset: 2px !important;
@@ -222,27 +213,21 @@ export default function App() {
     }
   ` : "";
 
-  // --- NUOVO ROBOT: "IL GPS DEL PLAYER" POTENZIATO ---
   const dynamicJS = `
     (function() {
-      // INIETTA GLI STILI SEGRETI
       const style = document.createElement('style');
       style.type = 'text/css';
       style.innerHTML = \`${cssBase} ${cssTV}\`;
       document.head.appendChild(style);
 
-      // ATTIVA IL TELECOMANDO TV SE SERVE
       ${Platform.isTV ? `
         setTimeout(() => {
           document.querySelectorAll('a, button, .poster, .film-item, video, iframe').forEach(el => el.setAttribute('tabindex', '0'));
         }, 2000);
       ` : ""}
 
-      // BLOCCO POPUP AGGRESSIVI (Impedisce di aprire nuove schede)
       window.open = function() { return null; };
       
-      // RIMOSSO IL VECCHIO SETINTERVAL DISTRUTTIVO PER LE PUBBLICITÀ CHE ROMPEVA IL VIDEO
-
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href;
       let hasSeeked = (initialSavedTime < 5);
@@ -444,12 +429,6 @@ export default function App() {
             allowsInlineMediaPlayback={true}
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
-            
-            // LO SCUDO ESTERNO: Blocca navigazioni fuori dal sito!
-            onShouldStartLoadWithRequest={(request) => {
-              const url = request.url.toLowerCase();
-              return url.includes('streaming') || url.includes('community') || url.includes('about:blank');
-            }}
             
             onMessage={async (e) => {
               try {
