@@ -2,14 +2,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, ImageBackground, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// IMPORTANTE: Ho aggiunto "Platform" qui sotto per il sensore TV/Telefono
+import { ActivityIndicator, Animated, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 // --- CONFIGURAZIONE ---
 const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
-const STREAMING_DOMAIN = "https://streamingcommunityz.love";
+// Rimosso STREAMING_DOMAIN fisso, ora lo prende dal file txt!
 
 const GENRES = [
   { id: null, name: 'Tutti' },
@@ -35,6 +36,9 @@ export default function App() {
   const [targetUrl, setTargetUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
+  
+  // STATO PER IL DOMINIO AUTOMATICO
+  const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunity.computer');
 
   const webViewRef = useRef(null);
   
@@ -56,10 +60,26 @@ export default function App() {
   const player = useVideoPlayer(videoUrl, p => { if (videoUrl) p.play(); });
 
   useEffect(() => {
+    fetchRemoteLink(); // Cerca il link aggiornato all'avvio
     startCinematicSplash();
     fetchHomeData();
     loadUserData();
   }, []);
+
+  // --- NOVITÀ: LETTURA LINK DA GITHUB ---
+  const fetchRemoteLink = async () => {
+    try {
+      const urlSegreto = 'https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt';
+      const response = await fetch(urlSegreto);
+      const text = await response.text();
+      const linkPulito = text.trim();
+      if (linkPulito) {
+        setStreamingDomain(linkPulito);
+      }
+    } catch (error) {
+      console.log("Uso dominio di base, file Github non trovato ancora.");
+    }
+  };
 
   const startCinematicSplash = async () => {
     try {
@@ -142,7 +162,8 @@ export default function App() {
       
       setCurrentMovie(newItem);
 
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${STREAMING_DOMAIN}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
+      // USA IL DOMINIO AGGIORNATO DA GITHUB
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
     } catch (e) { console.error(e); }
   };
@@ -177,14 +198,50 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- NUOVO ROBOT: "IL GPS DEL PLAYER" ---
+  // --- NOVITÀ: STILI CSS E SENSORE TV ---
+  const cssBase = `
+    /* Nascondi header, loghi e menu originali senza rompere il video */
+    header, .logo, .navbar, .header-wrapper, footer { display: none !important; }
+    [alt*="Streaming"], [alt*="Community"] { display: none !important; }
+    body { background-color: #000000 !important; color: white !important; }
+    
+    /* Blocco pubblicità SICURO (non tocca iframe o z-index alti vitali) */
+    .adsbygoogle, .ad-container, [id*="banner"], .popup-overlay { display: none !important; }
+  `;
+
+  const cssTV = Platform.isTV ? `
+    /* Effetto Telecomando stile Netflix SOLO PER TV */
+    a:focus, button:focus, input:focus, [tabindex]:focus, .video-item:focus {
+      outline: 4px solid #E50914 !important;
+      outline-offset: 2px !important;
+      transform: scale(1.05) !important;
+      transition: all 0.2s ease-in-out !important;
+      z-index: 9999 !important;
+      box-shadow: 0px 0px 15px #E50914 !important;
+      background-color: rgba(229, 9, 20, 0.1) !important;
+    }
+  ` : "";
+
+  // --- NUOVO ROBOT: "IL GPS DEL PLAYER" POTENZIATO ---
   const dynamicJS = `
     (function() {
+      // INIETTA GLI STILI SEGRETI
+      const style = document.createElement('style');
+      style.type = 'text/css';
+      style.innerHTML = \`${cssBase} ${cssTV}\`;
+      document.head.appendChild(style);
+
+      // ATTIVA IL TELECOMANDO TV SE SERVE
+      ${Platform.isTV ? `
+        setTimeout(() => {
+          document.querySelectorAll('a, button, .poster, .film-item, video, iframe').forEach(el => el.setAttribute('tabindex', '0'));
+        }, 2000);
+      ` : ""}
+
+      // BLOCCO POPUP AGGRESSIVI (Impedisce di aprire nuove schede)
       window.open = function() { return null; };
-      setInterval(() => {
-        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]'];
-        adSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
-      }, 1000);
+      
+      // RIMOSSO IL VECCHIO SETINTERVAL DISTRUTTIVO PER LE PUBBLICITÀ CHE ROMPEVA IL VIDEO
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href;
@@ -193,37 +250,33 @@ export default function App() {
 
       function attachToVideo(v) {
         if (!v || v.dataset.hooked) return;
-        v.dataset.hooked = "true"; // Evita di riattaccarlo 2 volte
+        v.dataset.hooked = "true"; 
 
         const trySeek = () => {
           if (!hasSeeked && v.readyState >= 1) {
             if (Math.abs(v.currentTime - initialSavedTime) > 3) {
               v.currentTime = initialSavedTime;
             } else {
-              hasSeeked = true; // Salto riuscito!
+              hasSeeked = true; 
             }
           }
         };
 
-        // Usa gli eventi nativi del video (molto più stabili)
         v.addEventListener('loadedmetadata', trySeek);
         v.addEventListener('playing', trySeek);
 
-        // Fallback di sicurezza
         const seekInt = setInterval(() => {
           if (hasSeeked) { clearInterval(seekInt); return; }
           trySeek();
         }, 500);
 
         v.addEventListener('timeupdate', () => {
-          // SE CAMBIA L'URL (es: premi "Prossimo Episodio"), AZZERA TUTTO!
           if (location.href !== currentUrl) {
             currentUrl = location.href;
             hasSeeked = true; 
             initialSavedTime = 0;
           }
 
-          // Salva solo se il video sta suonando davvero ed è andato oltre il tempo salvato
           if (hasSeeked && v.currentTime > 0 && !v.paused) {
             if (Math.abs(v.currentTime - lastSaved) > 5) {
               lastSaved = v.currentTime;
@@ -232,7 +285,7 @@ export default function App() {
                   type: 'TIME_UPDATE', 
                   time: v.currentTime, 
                   duration: v.duration || 0,
-                  url: location.href // INVIO L'URL ESATTO IN CUI MI TROVO ORA!
+                  url: location.href
                 }));
               } catch(e) {}
             }
@@ -240,7 +293,6 @@ export default function App() {
         });
       }
 
-      // Cerca continuamente il video e attacca il GPS
       setInterval(() => {
         document.querySelectorAll('video').forEach(attachToVideo);
       }, 1000);
@@ -393,9 +445,12 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             
-            // Ho RIMOSSO il vecchio onNavigationStateChange che ti resettava tutto a 0!
+            // LO SCUDO ESTERNO: Blocca navigazioni fuori dal sito!
+            onShouldStartLoadWithRequest={(request) => {
+              const url = request.url.toLowerCase();
+              return url.includes('streaming') || url.includes('community') || url.includes('about:blank');
+            }}
             
-            // ORA TUTTO AVVIENE QUI DENTRO IN MODO SICURO
             onMessage={async (e) => {
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
@@ -406,7 +461,6 @@ export default function App() {
                     currentList[idx].progress = msg.time;
                     currentList[idx].duration = msg.duration;
                     
-                    // Salva l'URL solo se è un link vero del sito, ignorando le pubblicità!
                     if (msg.url && msg.url.includes('streamingcommunity')) {
                       currentList[idx].lastUrl = msg.url;
                     }
