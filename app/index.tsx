@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, ImageBackground, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 // --- CONFIGURAZIONE ---
@@ -37,15 +37,12 @@ export default function App() {
   const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunity.computer');
 
   const webViewRef = useRef(null);
-  
-  // REFS PER IL SALVATAGGIO DEL MINUTO
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // ANIMAZIONI PREMIUM
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
   const glowAnim = useRef(new Animated.Value(0)).current; 
@@ -70,19 +67,15 @@ export default function App() {
         setStreamingDomain(linkPulito);
       }
     } catch (error) {
-      console.log("Uso dominio base, file Github non letto.");
+      console.log("Uso dominio base.");
     }
   };
 
   const startCinematicSplash = async () => {
     try {
-      const { sound } = await Audio.Sound.createAsync(
-        require('../assets/images/tudum.mp3') 
-      );
+      const { sound } = await Audio.Sound.createAsync(require('../assets/images/tudum.mp3'));
       await sound.playAsync();
-    } catch (e) { 
-      console.log("Audio non caricato:", e); 
-    }
+    } catch (e) {}
 
     const letterAnimations = letterAnims.map(anim =>
       Animated.spring(anim, { toValue: 1, friction: 5, tension: 60, useNativeDriver: false })
@@ -108,7 +101,7 @@ export default function App() {
 
       const savedList = await AsyncStorage.getItem('@my_list');
       if (savedList) setMyList(JSON.parse(savedList));
-    } catch (e) { console.error(e); }
+    } catch (e) {}
   };
 
   const toggleMyList = async (item) => {
@@ -119,15 +112,11 @@ export default function App() {
       if (exists) {
         currentList = currentList.filter(x => x.id !== item.id);
       } else {
-        currentList.unshift({
-          id: item.id,
-          title: item.title || item.name,
-          poster_path: item.poster_path
-        });
+        currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path });
       }
       setMyList(currentList);
       await AsyncStorage.setItem('@my_list', JSON.stringify(currentList));
-    } catch (e) { console.error(e); }
+    } catch (e) {}
   };
 
   const startPlaying = async (item) => {
@@ -149,8 +138,9 @@ export default function App() {
       await AsyncStorage.setItem('@continue_watching', JSON.stringify(updatedList));
       
       setCurrentMovie(newItem);
+      // TI MANDA ALLA PAGINA DI RICERCA DEL SITO
       setTargetUrl(`${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`);
-    } catch (e) { console.error(e); }
+    } catch (e) {}
   };
 
   const fetchHomeData = async (genreId = null) => {
@@ -170,7 +160,7 @@ export default function App() {
       setFeatured(trending.results[0]);
       setSections({ trending: trending.results.slice(1, 15), movies: movies.results, series: series.results, searchResults: [] });
       setLoading(false);
-    } catch (e) { console.error(e); setLoading(false); }
+    } catch (e) { setLoading(false); }
   };
 
   const handleSearch = async () => {
@@ -179,49 +169,24 @@ export default function App() {
     try {
       const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&language=it-IT&query=${encodeURIComponent(searchQuery)}`).then(r => r.json());
       setSections(prev => ({ ...prev, searchResults: res.results }));
-    } catch (e) { console.error(e); }
+    } catch (e) {}
     setLoading(false);
   };
 
-  // --- INIEZIONE CSS: EFFETTO APP NATIVA AL 100% ---
+  // --- CSS MORBIDO: Nasconde l'inutile, ma lascia la pagina navigabile! ---
   const cssBase = `
-    header, footer, nav, aside, .navbar, .header-wrapper, .logo, 
-    #header, #footer, .comments, .sidebar, .related-movies, .social-share,
+    header, footer, nav, .navbar, .header-wrapper, .logo, 
+    #header, #footer, .comments, .social-share,
     [class*="ad-"], [id*="banner"], iframe[src*="ads"], .cookie-consent { 
       display: none !important; 
     }
-    
     [alt*="Streaming"], [alt*="Community"], a[href*="streamingcommunity"] { 
       display: none !important; 
     }
-    
-    html, body { 
+    body { 
       background-color: #000000 !important; 
       color: #FFFFFF !important; 
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; 
-      margin: 0 !important; 
-      padding: 0 !important; 
-      width: 100vw !important;
-      height: 100vh !important; 
-      overflow: hidden !important; 
-      -webkit-tap-highlight-color: transparent !important; 
-      -webkit-touch-callout: none !important; 
-      user-select: none !important; 
     }
-    
-    .container, .main-content, #main, .video-wrapper, .player-container, #player {
-      width: 100vw !important;
-      height: 100vh !important;
-      max-width: 100% !important;
-      padding: 0 !important;
-      margin: 0 !important;
-      border: none !important;
-      display: flex !important;
-      justify-content: center !important;
-      align-items: center !important;
-      background-color: #000000 !important;
-    }
-
     ::-webkit-scrollbar {
       display: none !important;
     }
@@ -247,8 +212,8 @@ export default function App() {
       style.innerHTML = \`${cssBase} ${cssTV}\`;
       document.head.appendChild(style);
 
-      /* IL TRUCCO DEL FANTASMA: Neutralizza i popup invisibili */
-      window.open = function(url) { 
+      /* FANTASMA: ammazza le pubblicità quando clicchi la locandina o il player */
+      window.open = function() { 
         return { closed: true }; 
       };
 
@@ -258,7 +223,7 @@ export default function App() {
         }, 2000);
       ` : ""}
 
-      /* IL CRONOMETRO SILENZIOSO: Salva il minuto esatto del video */
+      /* CRONOMETRO */
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let hasSeeked = (initialSavedTime < 5);
       let lastSaved = 0;
@@ -310,32 +275,14 @@ export default function App() {
   `;
 
   if (showSplash) {
-    const glowColor = glowAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['rgba(229, 9, 20, 0)', 'rgba(229, 9, 20, 0.9)']
-    });
-
+    const glowColor = glowAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(229, 9, 20, 0)', 'rgba(229, 9, 20, 0.9)'] });
     return (
       <Animated.View style={[styles.splash, { opacity: splashOpacity }]}>
         <StatusBar hidden />
         <Animated.View style={{ flexDirection: 'row', transform: [{ scale: globalZoom }] }}>
           {LETTERS.map((letter, index) => {
             return (
-              <Animated.Text 
-                key={index} 
-                style={[
-                  styles.splashLetter, 
-                  { 
-                    opacity: letterAnims[index], 
-                    transform: [
-                      { scale: letterAnims[index] }, 
-                      { translateY: letterAnims[index].interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) } 
-                    ],
-                    textShadowColor: glowColor,
-                    textShadowRadius: 15,
-                  }
-                ]}
-              >
+              <Animated.Text key={index} style={[styles.splashLetter, { opacity: letterAnims[index], transform: [{ scale: letterAnims[index] }, { translateY: letterAnims[index].interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) } ], textShadowColor: glowColor, textShadowRadius: 15 }]}>
                 {letter}
               </Animated.Text>
             );
@@ -353,25 +300,14 @@ export default function App() {
         <TouchableOpacity onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}}>
           <Text style={styles.logo}>NETCHILL</Text>
         </TouchableOpacity>
-        <TextInput 
-          style={styles.searchBar} 
-          placeholder="Cerca film o serie..." 
-          placeholderTextColor="#666"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={handleSearch}
-        />
+        <TextInput style={styles.searchBar} placeholder="Cerca film o serie..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} onSubmitEditing={handleSearch} />
       </View>
 
       {!targetUrl && (
         <View style={styles.catBar}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {GENRES.map(g => (
-              <TouchableOpacity 
-                key={g.id} 
-                style={[styles.catTab, selectedGenre === g.id && styles.catActive]}
-                onPress={() => { setSelectedGenre(g.id); fetchHomeData(g.id); }}
-              >
+              <TouchableOpacity key={g.id} style={[styles.catTab, selectedGenre === g.id && styles.catActive]} onPress={() => { setSelectedGenre(g.id); fetchHomeData(g.id); }}>
                 <Text style={[styles.catText, selectedGenre === g.id && {color: 'white'}]}>{g.name}</Text>
               </TouchableOpacity>
             ))}
@@ -388,29 +324,17 @@ export default function App() {
                   <View style={styles.heroOverlay}>
                     <Text style={styles.heroTitle}>{featured.title || featured.name}</Text>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                      <TouchableOpacity style={styles.playBtn} onPress={() => startPlaying(featured)}>
-                        <Text style={styles.playBtnText}>▶ RIPRODUCI</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.heroAddBtn} onPress={() => toggleMyList(featured)}>
-                        <Text style={styles.heroAddBtnText}>{myList.find(x => x.id === featured.id) ? '✓' : '+'}</Text>
-                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.playBtn} onPress={() => startPlaying(featured)}><Text style={styles.playBtnText}>▶ RIPRODUCI</Text></TouchableOpacity>
+                      <TouchableOpacity style={styles.heroAddBtn} onPress={() => toggleMyList(featured)}><Text style={styles.heroAddBtnText}>{myList.find(x => x.id === featured.id) ? '✓' : '+'}</Text></TouchableOpacity>
                     </View>
                   </View>
                 </ImageBackground>
               )}
               {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 50}} /> : (
                 <View style={styles.content}>
-                  
-                  {/* RIGA CONTINUA A GUARDARE */}
-                  {continueWatching.length > 0 && !selectedGenre && (
-                    <Row title="Continua a guardare" data={continueWatching} onPlay={startPlaying} isHistory myList={myList} onToggleList={toggleMyList} />
-                  )}
-
-                  {myList.length > 0 && !selectedGenre && (
-                    <Row title="La mia Lista" data={myList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
-                  )}
-                  
-                  <Row title={selectedGenre ? "I migliori della categoria" : "Tendenze della settimana"} data={sections.trending} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  {continueWatching.length > 0 && !selectedGenre && <Row title="Continua a guardare" data={continueWatching} onPlay={startPlaying} isHistory myList={myList} onToggleList={toggleMyList} />}
+                  {myList.length > 0 && !selectedGenre && <Row title="La mia Lista" data={myList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />}
+                  <Row title={selectedGenre ? "I migliori" : "Tendenze della settimana"} data={sections.trending} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   <Row title="Film Consigliati" data={sections.movies} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   <Row title="Serie TV" data={sections.series} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                 </View>
@@ -423,9 +347,7 @@ export default function App() {
                 {sections.searchResults.map(m => (
                   <TouchableOpacity key={m.id} style={styles.card} onPress={() => startPlaying(m)}>
                     <Image source={{ uri: m.poster_path ? BASE_IMAGE_URL + m.poster_path : 'https://via.placeholder.com/150x225' }} style={styles.cardImg} />
-                    <TouchableOpacity style={styles.overlayAddBtn} onPress={() => toggleMyList(m)}>
-                      <Text style={{color: 'white', fontWeight: 'bold'}}>{myList.find(x => x.id === m.id) ? '✓' : '+'}</Text>
-                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.overlayAddBtn} onPress={() => toggleMyList(m)}><Text style={{color: 'white', fontWeight: 'bold'}}>{myList.find(x => x.id === m.id) ? '✓' : '+'}</Text></TouchableOpacity>
                     <Text style={styles.cardTitle} numberOfLines={1}>{m.title || m.name}</Text>
                   </TouchableOpacity>
                 ))}
@@ -436,12 +358,8 @@ export default function App() {
       ) : (
         <View style={{flex: 1}}>
           <View style={styles.browserBar}>
-            <TouchableOpacity onPress={() => webViewRef.current?.goBack()}>
-              <Text style={styles.barLink}>← INDIETRO</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setTargetUrl(''); setCurrentMovie(null); }}>
-              <Text style={styles.barLink}>CHIUDI VIDEO</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => webViewRef.current?.goBack()}><Text style={styles.barLink}>← INDIETRO</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => { setTargetUrl(''); setCurrentMovie(null); }}><Text style={styles.barLink}>CHIUDI VIDEO</Text></TouchableOpacity>
           </View>
           
           <WebView 
@@ -454,7 +372,6 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             onMessage={async (e) => {
-              // RICEZIONE DEL MINUTO ESATTO SALVATO DAL SITO
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
                 if (msg.type === 'TIME_UPDATE' && currentMovieRef.current) {
@@ -483,20 +400,13 @@ const Row = ({ title, data, onPlay, isHistory, myList = [], onToggleList }) => (
       {data.map(item => {
         const inList = myList.find(x => x.id === item.id);
         const progressPercent = item.duration > 0 ? (item.progress / item.duration) * 100 : 0;
-        
         return (
           <TouchableOpacity key={item.id} style={styles.card} onPress={() => onPlay(item)}>
             <View>
               <Image source={{ uri: item.poster_path ? BASE_IMAGE_URL + item.poster_path : 'https://via.placeholder.com/150x225' }} style={[styles.cardImg, isHistory && {borderBottomLeftRadius: 0, borderBottomRightRadius: 0}]} />
-              <TouchableOpacity style={styles.overlayAddBtn} onPress={() => onToggleList(item)}>
-                <Text style={{color: 'white', fontWeight: 'bold'}}>{inList ? '✓' : '+'}</Text>
-              </TouchableOpacity>
-              
-              {/* BARRA ROSSA DI AVANZAMENTO DEL FILM */}
+              <TouchableOpacity style={styles.overlayAddBtn} onPress={() => onToggleList(item)}><Text style={{color: 'white', fontWeight: 'bold'}}>{inList ? '✓' : '+'}</Text></TouchableOpacity>
               {isHistory && item.duration > 0 && (
-                <View style={styles.progressContainer}>
-                  <View style={[styles.progressBar, { width: `${progressPercent}%` }]} />
-                </View>
+                <View style={styles.progressContainer}><View style={[styles.progressBar, { width: `${progressPercent}%` }]} /></View>
               )}
             </View>
             <Text style={styles.cardTitle} numberOfLines={1}>{item.title || item.name}</Text>
