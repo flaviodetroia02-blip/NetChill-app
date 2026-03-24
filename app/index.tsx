@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-// IMPORTANTE: Abbiamo aggiunto BackHandler qui sotto!
 import { ActivityIndicator, Animated, BackHandler, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -10,6 +9,9 @@ import { WebView } from 'react-native-webview';
 const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
+
+// IL TUO TELECOMANDO A DISTANZA SU GITHUB (Ora senza token, eterno!)
+const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 
 const GENRES = [
   { id: null, name: 'Tutti' },
@@ -37,13 +39,10 @@ export default function App() {
   const [targetUrl, setTargetUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
-  
-  // NUOVO STATO: Salva la cronologia del tasto Indietro del player
   const [canGoBack, setCanGoBack] = useState(false);
 
-  // STATI PER L'URL DINAMICO
-  const [streamingDomain, setStreamingDomain] = useState(null);
-  const [tempDomainInput, setTempDomainInput] = useState('');
+  // STATO DEL DOMINIO: Di default ha questo, ma poi legge GitHub in silenzio!
+  const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunityz.love');
 
   // STATI PER I PROFILI
   const [profiles, setProfiles] = useState([]);
@@ -58,29 +57,20 @@ export default function App() {
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // --- GESTIONE TASTO INDIETRO (FIRE STICK / ANDROID) ---
+  // GESTIONE TASTO INDIETRO TV/TELEFONO
   useEffect(() => {
     const backAction = () => {
-      // Se c'è un video aperto (targetUrl è pieno)
       if (targetUrl) {
-        if (canGoBack && webViewRef.current) {
-          // Se la pubblicità ti ha portato via, torna al video!
-          webViewRef.current.goBack();
-        } else {
-          // Se sei già sul video, chiudi tutto e torna alla Home in modo pulito
-          setTargetUrl('');
-          setCurrentMovie(null);
-        }
-        return true; // Ferma Android dall'uscire dall'app
+        if (canGoBack && webViewRef.current) webViewRef.current.goBack();
+        else { setTargetUrl(''); setCurrentMovie(null); }
+        return true; 
       }
-      return false; // Se sei nella home, lascia che il tasto funzioni normalmente
+      return false; 
     };
-
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
   }, [targetUrl, canGoBack]);
 
-  // ANIMAZIONI
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
   const glowAnim = useRef(new Animated.Value(0)).current; 
@@ -93,13 +83,30 @@ export default function App() {
     startCinematicSplash();
     fetchHomeData();
     loadInitialConfig();
+    fetchDomainFromGitHub(); 
   }, []);
+
+  // IL ROBOT CHE LEGGE IL FILE SU GITHUB
+  const fetchDomainFromGitHub = async () => {
+    try {
+      // Aggiungiamo un parametro ant-cache per essere sicuri che legga sempre l'ultima versione!
+      const response = await fetch(GITHUB_RAW_LINK + '?t=' + new Date().getTime());
+      if (response.ok) {
+        let text = await response.text();
+        text = text.trim(); 
+        if (text.startsWith('http')) {
+          if (text.endsWith('/')) text = text.slice(0, -1);
+          setStreamingDomain(text);
+          console.log("Dominio aggiornato da GitHub:", text);
+        }
+      }
+    } catch (e) {
+      console.log("Impossibile leggere GitHub, uso dominio di default.");
+    }
+  };
 
   const loadInitialConfig = async () => {
     try {
-      const savedDomain = await AsyncStorage.getItem('@streaming_domain');
-      if (savedDomain) setStreamingDomain(savedDomain);
-
       const savedProfiles = await AsyncStorage.getItem('@profiles');
       if (savedProfiles) {
         setProfiles(JSON.parse(savedProfiles));
@@ -112,9 +119,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeProfile) {
-      loadUserData(activeProfile.id);
-    }
+    if (activeProfile) loadUserData(activeProfile.id);
   }, [activeProfile]);
 
   const loadUserData = async (profileId) => {
@@ -190,9 +195,9 @@ export default function App() {
       
       setCurrentMovie(newItem);
 
+      // URL GENERATO CON LA VARIABILE LETTA DA GITHUB
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
-      // Resetta il back handler quando apri un nuovo video
       setCanGoBack(false); 
     } catch (e) { console.error(e); }
   };
@@ -227,15 +232,6 @@ export default function App() {
     setLoading(false);
   };
 
-  const saveNewDomain = async () => {
-    if (tempDomainInput.trim() !== '') {
-      let finalUrl = tempDomainInput.trim().toLowerCase();
-      if (!finalUrl.startsWith('http')) finalUrl = 'https://' + finalUrl;
-      await AsyncStorage.setItem('@streaming_domain', finalUrl);
-      setStreamingDomain(finalUrl);
-    }
-  };
-
   const startCinematicSplash = async () => {
     try {
       const { sound } = await Audio.Sound.createAsync(require('../assets/images/tudum.mp3'));
@@ -255,29 +251,10 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // --- ROBOT POTENZIATO: BLOCCO LINK FRAUDOLENTI (FULLSCREEN TRAP) ---
+  // IL TUO ROBOT DELLE 488 RIGHE
   const dynamicJS = `
     (function() {
       window.open = function() { return null; };
-      
-      // Blocca i click sui link pubblicitari nascosti sopra i bottoni
-      document.addEventListener('click', function(e) {
-        let a = e.target.closest('a');
-        if (a && a.target === '_blank') {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }, true);
-
-      const nascondiSito = document.createElement('style');
-      nascondiSito.innerHTML = \`
-        header, footer, nav, .logo, [class*="logo"], [id*="logo"], [class*="menu"],
-        .vjs-watermark, .streamingcommunity-logo, [alt*="StreamingCommunity"],
-        .site-name, .brand { display: none !important; opacity: 0 !important; pointer-events: none !important; }
-        body { background-color: #000 !important; }
-      \`;
-      document.head.appendChild(nascondiSito);
-
       setInterval(() => {
         const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]'];
         adSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
@@ -296,7 +273,9 @@ export default function App() {
           if (!hasSeeked && v.readyState >= 1) {
             if (Math.abs(v.currentTime - initialSavedTime) > 3) {
               v.currentTime = initialSavedTime;
-            } else { hasSeeked = true; }
+            } else {
+              hasSeeked = true; 
+            }
           }
         };
 
@@ -320,7 +299,10 @@ export default function App() {
               lastSaved = v.currentTime;
               try {
                 window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                  type: 'TIME_UPDATE', time: v.currentTime, duration: v.duration || 0, url: location.href 
+                  type: 'TIME_UPDATE', 
+                  time: v.currentTime, 
+                  duration: v.duration || 0,
+                  url: location.href 
                 }));
               } catch(e) {}
             }
@@ -328,7 +310,9 @@ export default function App() {
         });
       }
 
-      setInterval(() => document.querySelectorAll('video').forEach(attachToVideo), 1000);
+      setInterval(() => {
+        document.querySelectorAll('video').forEach(attachToVideo);
+      }, 1000);
     })();
     true;
   `;
@@ -349,20 +333,7 @@ export default function App() {
     );
   }
 
-  if (!streamingDomain) {
-    return (
-      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}>
-        <StatusBar barStyle="light-content" />
-        <Text style={[styles.logo, { fontSize: 40, marginBottom: 10 }]}>NETCHILL</Text>
-        <Text style={{ color: 'white', fontSize: 16, marginBottom: 30, textAlign: 'center' }}>Inserisci l'URL del sito di streaming per iniziare.</Text>
-        <TextInput style={[styles.searchBar, { width: '100%', marginBottom: 20, padding: 15, fontSize: 16 }]} placeholder="es. https://streamingcommunity.com" placeholderTextColor="#666" value={tempDomainInput} onChangeText={setTempDomainInput} autoCapitalize="none" keyboardType="url" />
-        <TouchableOpacity style={styles.playBtn} onPress={saveNewDomain} hasTVPreferredFocus={true}>
-          <Text style={styles.playBtnText}>SALVA E INIZIA</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
-
+  // SCHERMATA PROFILI 
   if (!activeProfile) {
     return (
       <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -413,10 +384,6 @@ export default function App() {
       <View style={styles.header}>
         <TouchableOpacity 
           onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}}
-          onLongPress={async () => {
-            await AsyncStorage.removeItem('@streaming_domain');
-            setStreamingDomain(null); setTempDomainInput(''); setActiveProfile(null);
-          }}
           hasTVPreferredFocus={view !== 'search'}
         >
           <Text style={styles.logo}>NETCHILL</Text>
@@ -491,7 +458,6 @@ export default function App() {
           <View style={styles.browserBar}>
             <TouchableOpacity 
               onPress={() => {
-                // Anche il bottone "Indietro" su schermo ora controlla la cronologia
                 if (canGoBack && webViewRef.current) webViewRef.current.goBack();
                 else { setTargetUrl(''); setCurrentMovie(null); }
               }} 
@@ -515,7 +481,6 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             
-            // IL SEGRETO È QUI: Aggiorniamo continuamente la memoria del Webview
             onNavigationStateChange={(navState) => {
               setCanGoBack(navState.canGoBack);
             }}
