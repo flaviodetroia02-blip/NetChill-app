@@ -39,9 +39,6 @@ export default function App() {
   const [targetUrl, setTargetUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
-  
-  // NUOVO STATO: Traccia l'indirizzo web in tempo reale
-  const [currentWebUrl, setCurrentWebUrl] = useState('');
 
   const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunityz.love');
 
@@ -53,26 +50,22 @@ export default function App() {
   const webViewRef = useRef(null);
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
+  
+  // LA SOLUZIONE: Questa memoria in tempo reale non si bloccherà mai
+  const canGoBackRef = useRef(false);
 
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // --- FIX TV: IL TASTO INDIETRO INTELLIGENTE PER IL TELECOMANDO ---
+  // --- FIX TASTO INDIETRO (INFALLIBILE) ---
   useEffect(() => {
     const backAction = () => {
       if (targetUrl) {
-        // Estrapola il nome del sito (es. "streamingcommunityz.love")
-        const domainPart = streamingDomain.split('//')[1] || streamingDomain;
-        
-        // Se l'URL in cui ci troviamo NON contiene il nome del sito, significa che un'ad ci ha reindirizzati
-        const isAd = currentWebUrl && !currentWebUrl.includes(domainPart);
-
-        if (isAd && webViewRef.current) {
-          // SE SEI SU UNA PUBBLICITÀ: Il tasto indietro della TV ti riporta al film
-          webViewRef.current.goBack();
+        // Se c'è una pubblicità aperta nella pagina (la memoria dice VERO)
+        if (canGoBackRef.current && webViewRef.current) {
+          webViewRef.current.goBack(); // Chiude l'ad e torna al film
         } else {
-          // SE SEI SUL FILM: Il tasto indietro della TV chiude il player e ti riporta al catalogo
-          setTargetUrl('');
+          setTargetUrl(''); // Chiude il film e torna alla Home
           setCurrentMovie(null);
         }
         return true; 
@@ -81,7 +74,7 @@ export default function App() {
     };
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [targetUrl, currentWebUrl, streamingDomain]);
+  }, [targetUrl]); // Abbiamo rimosso lo stato che bloccava il tasto!
 
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
@@ -204,6 +197,9 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       
       setCurrentMovie(newItem);
+      
+      // Resetta il sensore prima di aprire un nuovo film
+      canGoBackRef.current = false;
 
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
@@ -259,13 +255,23 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
+  // AGGIUNTA UNA REGOLA BRUTALE PER UCCIDERE I POPUP INVISIBILI SUL TASTO FULLSCREEN
   const dynamicJS = `
     (function() {
       window.open = function() { return null; };
+      
+      document.addEventListener('click', function(e) {
+        let a = e.target.closest('a');
+        if (a && a.target === '_blank') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
+
       setInterval(() => {
-        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]'];
+        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]', 'div[style*="position: absolute"][style*="z-index: 2147483647"]'];
         adSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
-      }, 1000);
+      }, 500);
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href;
@@ -462,11 +468,19 @@ export default function App() {
       ) : (
         <View style={{flex: 1}}>
           <View style={styles.browserBar}>
-            {/* Tasti su schermo separati per sicurezza (utile su telefono) */}
-            <TouchableOpacity onPress={() => webViewRef.current?.goBack()} hasTVPreferredFocus={true}>
+            {/* TASTO SU SCHERMO ALLINEATO ALLA NUOVA LOGICA */}
+            <TouchableOpacity 
+              onPress={() => {
+                if (canGoBackRef.current && webViewRef.current) webViewRef.current.goBack();
+                else { setTargetUrl(''); setCurrentMovie(null); }
+              }} 
+              hasTVPreferredFocus={true}
+            >
               <Text style={styles.barLink}>← INDIETRO</Text>
             </TouchableOpacity>
+            
             <Text style={styles.barTitle}>SHIELD ATTIVO 🛡️</Text>
+            
             <TouchableOpacity onPress={() => { setTargetUrl(''); setCurrentMovie(null); }}>
               <Text style={styles.barLink}>CHIUDI</Text>
             </TouchableOpacity>
@@ -482,9 +496,9 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             
-            // LEGGE IN TEMPO REALE DOVE SI TROVA IL BROWSER (CRUCIALE PER LA TV)
+            // IL SENSORE IN TEMPO REALE CHE REGISTRA LE PUBBLICITÀ
             onNavigationStateChange={(navState) => {
-              setCurrentWebUrl(navState.url);
+              canGoBackRef.current = navState.canGoBack;
             }}
 
             onMessage={async (e) => {
