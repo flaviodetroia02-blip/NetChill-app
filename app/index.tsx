@@ -9,7 +9,9 @@ import { WebView } from 'react-native-webview';
 const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
-const STREAMING_DOMAIN = "https://altadefinizione.autos/";
+
+// ⚠️ TOCCA A TE: INCOLLA QUI IL LINK DI ALTADEFINIZIONE (Mantieni le virgolette!)
+const STREAMING_DOMAIN = "https://altadefinizione.autos/"; 
 
 const GENRES = [
   { id: null, name: 'Tutti' },
@@ -142,7 +144,8 @@ export default function App() {
       
       setCurrentMovie(newItem);
 
-      const finalUrl = lastUrlToSave ? lastUrlToSave : STREAMING_DOMAIN;
+      // SISTEMATO ERRORE 404: Ora usa il sistema di ricerca universale (/?s=)
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${STREAMING_DOMAIN}/?s=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
     } catch (e) { console.error(e); }
   };
@@ -177,73 +180,40 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- NUOVO ROBOT: "IL GPS DEL PLAYER" ---
+  // --- IL MOTORE AGGIORNATO: SCANNER UNIVERSALE ---
   const dynamicJS = `
     (function() {
+      // 1. IL VACCINO ANTI-POPUP (Blocca nuove schede)
       window.open = function() { return null; };
+
+      // 2. IL MANTELLO DELL'INVISIBILITÀ (Nasconde i loghi e i menu del sito)
+      const nascondiSito = document.createElement('style');
+      nascondiSito.innerHTML = 'header, footer, nav, .logo, [class*="logo"], [id*="logo"], [class*="menu"] { display: none !important; }';
+      document.head.appendChild(nascondiSito);
+
+      // 3. LO SCANNER UNIVERSALE (Scova i lenzuoli invisibili senza sapere il nome)
       setInterval(() => {
-        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]', '.uvlci'];
-        adSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
-      }, 1000);
+        const tuttiGliElementi = document.querySelectorAll('div');
 
-      let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
-      let currentUrl = location.href;
-      let hasSeeked = (initialSavedTime < 5);
-      let lastSaved = 0;
-
-      function attachToVideo(v) {
-        if (!v || v.dataset.hooked) return;
-        v.dataset.hooked = "true"; // Evita di riattaccarlo 2 volte
-
-        const trySeek = () => {
-          if (!hasSeeked && v.readyState >= 1) {
-            if (Math.abs(v.currentTime - initialSavedTime) > 3) {
-              v.currentTime = initialSavedTime;
-            } else {
-              hasSeeked = true; // Salto riuscito!
-            }
-          }
-        };
-
-        // Usa gli eventi nativi del video (molto più stabili)
-        v.addEventListener('loadedmetadata', trySeek);
-        v.addEventListener('playing', trySeek);
-
-        // Fallback di sicurezza
-        const seekInt = setInterval(() => {
-          if (hasSeeked) { clearInterval(seekInt); return; }
-          trySeek();
-        }, 500);
-
-        v.addEventListener('timeupdate', () => {
-          // SE CAMBIA L'URL (es: premi "Prossimo Episodio"), AZZERA TUTTO!
-          if (location.href !== currentUrl) {
-            currentUrl = location.href;
-            hasSeeked = true; 
-            initialSavedTime = 0;
-          }
-
-          // Salva solo se il video sta suonando davvero ed è andato oltre il tempo salvato
-          if (hasSeeked && v.currentTime > 0 && !v.paused) {
-            if (Math.abs(v.currentTime - lastSaved) > 5) {
-              lastSaved = v.currentTime;
-              try {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                  type: 'TIME_UPDATE', 
-                  time: v.currentTime, 
-                  duration: v.duration || 0,
-                  url: location.href // INVIO L'URL ESATTO IN CUI MI TROVO ORA!
-                }));
-              } catch(e) {}
+        tuttiGliElementi.forEach(el => {
+          const stile = window.getComputedStyle(el);
+          const zIndex = parseInt(stile.zIndex) || 0;
+          
+          // Se galleggia sopra il video...
+          if ((stile.position === 'absolute' || stile.position === 'fixed') && zIndex > 90) {
+            if (!el.dataset.hackerato) {
+              el.dataset.hackerato = "true";
+              try { el.click(); } catch(e) {} // Mossa Judo: clic fantasma!
+              el.style.display = 'none'; // Lo distrugge
             }
           }
         });
-      }
 
-      // Cerca continuamente il video e attacca il GPS
-      setInterval(() => {
-        document.querySelectorAll('video').forEach(attachToVideo);
-      }, 1000);
+        // 4. PULIZIA CLASSICA (Per sicurezza)
+        const bannerSpazzatura = ['[class*="ads"]', '[id*="ads"]', '.overlay'];
+        bannerSpazzatura.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
+        
+      }, 500);
     })();
     true;
   `;
@@ -393,9 +363,6 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             
-            // Ho RIMOSSO il vecchio onNavigationStateChange che ti resettava tutto a 0!
-            
-            // ORA TUTTO AVVIENE QUI DENTRO IN MODO SICURO
             onMessage={async (e) => {
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
@@ -406,8 +373,7 @@ export default function App() {
                     currentList[idx].progress = msg.time;
                     currentList[idx].duration = msg.duration;
                     
-                    // Salva l'URL solo se è un link vero del sito, ignorando le pubblicità!
-                    if (msg.url && msg.url.includes('streamingcommunity')) {
+                    if (msg.url && msg.url.includes(STREAMING_DOMAIN.replace('https://', ''))) {
                       currentList[idx].lastUrl = msg.url;
                     }
                     
