@@ -142,7 +142,7 @@ export default function App() {
       
       setCurrentMovie(newItem);
 
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${STREAMING_DOMAIN}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
+      const finalUrl = lastUrlToSave ? lastUrlToSave : STREAMING_DOMAIN;
       setTargetUrl(finalUrl);
     } catch (e) { console.error(e); }
   };
