@@ -50,31 +50,23 @@ export default function App() {
   const webViewRef = useRef(null);
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
-  
-  // LA SOLUZIONE: Questa memoria in tempo reale non si bloccherà mai
-  const canGoBackRef = useRef(false);
 
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // --- FIX TASTO INDIETRO (INFALLIBILE) ---
+  // --- FIX: GESTIONE TASTO INDIETRO (SOLO FORZATURA WEBVIEW) ---
   useEffect(() => {
     const backAction = () => {
       if (targetUrl) {
-        // Se c'è una pubblicità aperta nella pagina (la memoria dice VERO)
-        if (canGoBackRef.current && webViewRef.current) {
-          webViewRef.current.goBack(); // Chiude l'ad e torna al film
-        } else {
-          setTargetUrl(''); // Chiude il film e torna alla Home
-          setCurrentMovie(null);
-        }
+        // Se sei nel player, il tasto fisico indietro FORZA sempre la pagina indietro. Non chiude MAI il film.
+        if (webViewRef.current) webViewRef.current.goBack();
         return true; 
       }
       return false; 
     };
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [targetUrl]); // Abbiamo rimosso lo stato che bloccava il tasto!
+  }, [targetUrl]);
 
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
@@ -197,9 +189,6 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       
       setCurrentMovie(newItem);
-      
-      // Resetta il sensore prima di aprire un nuovo film
-      canGoBackRef.current = false;
 
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
@@ -255,23 +244,13 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // AGGIUNTA UNA REGOLA BRUTALE PER UCCIDERE I POPUP INVISIBILI SUL TASTO FULLSCREEN
   const dynamicJS = `
     (function() {
       window.open = function() { return null; };
-      
-      document.addEventListener('click', function(e) {
-        let a = e.target.closest('a');
-        if (a && a.target === '_blank') {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }, true);
-
       setInterval(() => {
-        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]', 'div[style*="position: absolute"][style*="z-index: 2147483647"]'];
+        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]'];
         adSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
-      }, 500);
+      }, 1000);
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href;
@@ -468,11 +447,10 @@ export default function App() {
       ) : (
         <View style={{flex: 1}}>
           <View style={styles.browserBar}>
-            {/* TASTO SU SCHERMO ALLINEATO ALLA NUOVA LOGICA */}
+            {/* --- FIX: IL TASTO INDIETRO ORA FORZA SOLO IL RITORNO ALLA PAGINA PRECEDENTE --- */}
             <TouchableOpacity 
               onPress={() => {
-                if (canGoBackRef.current && webViewRef.current) webViewRef.current.goBack();
-                else { setTargetUrl(''); setCurrentMovie(null); }
+                if (webViewRef.current) webViewRef.current.goBack();
               }} 
               hasTVPreferredFocus={true}
             >
@@ -481,6 +459,7 @@ export default function App() {
             
             <Text style={styles.barTitle}>SHIELD ATTIVO 🛡️</Text>
             
+            {/* --- FIX: SOLO IL TASTO CHIUDI TI RIPORTA ALLA HOME DELL'APP --- */}
             <TouchableOpacity onPress={() => { setTargetUrl(''); setCurrentMovie(null); }}>
               <Text style={styles.barLink}>CHIUDI</Text>
             </TouchableOpacity>
@@ -496,11 +475,6 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             
-            // IL SENSORE IN TEMPO REALE CHE REGISTRA LE PUBBLICITÀ
-            onNavigationStateChange={(navState) => {
-              canGoBackRef.current = navState.canGoBack;
-            }}
-
             onMessage={async (e) => {
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
