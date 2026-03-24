@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// IMPORTANTE: Abbiamo aggiunto BackHandler qui sotto!
+import { ActivityIndicator, Animated, BackHandler, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 // --- CONFIGURAZIONE ---
@@ -36,6 +37,9 @@ export default function App() {
   const [targetUrl, setTargetUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
+  
+  // NUOVO STATO: Salva la cronologia del tasto Indietro del player
+  const [canGoBack, setCanGoBack] = useState(false);
 
   // STATI PER L'URL DINAMICO
   const [streamingDomain, setStreamingDomain] = useState(null);
@@ -54,6 +58,28 @@ export default function App() {
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
+  // --- GESTIONE TASTO INDIETRO (FIRE STICK / ANDROID) ---
+  useEffect(() => {
+    const backAction = () => {
+      // Se c'è un video aperto (targetUrl è pieno)
+      if (targetUrl) {
+        if (canGoBack && webViewRef.current) {
+          // Se la pubblicità ti ha portato via, torna al video!
+          webViewRef.current.goBack();
+        } else {
+          // Se sei già sul video, chiudi tutto e torna alla Home in modo pulito
+          setTargetUrl('');
+          setCurrentMovie(null);
+        }
+        return true; // Ferma Android dall'uscire dall'app
+      }
+      return false; // Se sei nella home, lascia che il tasto funzioni normalmente
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [targetUrl, canGoBack]);
+
   // ANIMAZIONI
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
@@ -69,7 +95,6 @@ export default function App() {
     loadInitialConfig();
   }, []);
 
-  // CARICA IL DOMINIO E I PROFILI ALL'AVVIO
   const loadInitialConfig = async () => {
     try {
       const savedDomain = await AsyncStorage.getItem('@streaming_domain');
@@ -79,7 +104,6 @@ export default function App() {
       if (savedProfiles) {
         setProfiles(JSON.parse(savedProfiles));
       } else {
-        // Profilo di default se è la primissima volta
         const defaultProfile = [{ id: '1', name: 'Ospite', avatar: '😎' }];
         setProfiles(defaultProfile);
         await AsyncStorage.setItem('@profiles', JSON.stringify(defaultProfile));
@@ -87,7 +111,6 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  // QUANDO SELEZIONI UN PROFILO, CARICA I SUOI DATI PRIVATI
   useEffect(() => {
     if (activeProfile) {
       loadUserData(activeProfile.id);
@@ -98,7 +121,7 @@ export default function App() {
     try {
       const savedHistory = await AsyncStorage.getItem(`@continue_watching_${profileId}`);
       if (savedHistory) setContinueWatching(JSON.parse(savedHistory));
-      else setContinueWatching([]); // Reset se vuoto
+      else setContinueWatching([]); 
 
       const savedList = await AsyncStorage.getItem(`@my_list_${profileId}`);
       if (savedList) setMyList(JSON.parse(savedList));
@@ -121,11 +144,10 @@ export default function App() {
   };
 
   const deleteProfile = async (id) => {
-    if (profiles.length <= 1) return; // Non cancellare l'ultimo
+    if (profiles.length <= 1) return; 
     const updatedProfiles = profiles.filter(p => p.id !== id);
     setProfiles(updatedProfiles);
     await AsyncStorage.setItem('@profiles', JSON.stringify(updatedProfiles));
-    // Pulizia dei dati del profilo cancellato
     await AsyncStorage.removeItem(`@continue_watching_${id}`);
     await AsyncStorage.removeItem(`@my_list_${id}`);
   };
@@ -170,6 +192,8 @@ export default function App() {
 
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
+      // Resetta il back handler quando apri un nuovo video
+      setCanGoBack(false); 
     } catch (e) { console.error(e); }
   };
 
@@ -231,10 +255,20 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
+  // --- ROBOT POTENZIATO: BLOCCO LINK FRAUDOLENTI (FULLSCREEN TRAP) ---
   const dynamicJS = `
     (function() {
       window.open = function() { return null; };
       
+      // Blocca i click sui link pubblicitari nascosti sopra i bottoni
+      document.addEventListener('click', function(e) {
+        let a = e.target.closest('a');
+        if (a && a.target === '_blank') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
+
       const nascondiSito = document.createElement('style');
       nascondiSito.innerHTML = \`
         header, footer, nav, .logo, [class*="logo"], [id*="logo"], [class*="menu"],
@@ -329,7 +363,6 @@ export default function App() {
     );
   }
 
-  // --- NUOVA SCHERMATA: SELEZIONE PROFILO ---
   if (!activeProfile) {
     return (
       <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -391,8 +424,6 @@ export default function App() {
         
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TextInput style={[styles.searchBar, { width: 150, marginRight: 15 }]} placeholder="Cerca..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} onSubmitEditing={handleSearch} />
-          
-          {/* TASTO PER CAMBIARE PROFILO IN ALTO A DESTRA */}
           <TouchableOpacity onPress={() => setActiveProfile(null)} style={{ width: 35, height: 35, borderRadius: 5, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }}>
             <Text style={{ fontSize: 20 }}>{activeProfile.avatar}</Text>
           </TouchableOpacity>
@@ -458,7 +489,14 @@ export default function App() {
       ) : (
         <View style={{flex: 1}}>
           <View style={styles.browserBar}>
-            <TouchableOpacity onPress={() => webViewRef.current?.goBack()} hasTVPreferredFocus={true}>
+            <TouchableOpacity 
+              onPress={() => {
+                // Anche il bottone "Indietro" su schermo ora controlla la cronologia
+                if (canGoBack && webViewRef.current) webViewRef.current.goBack();
+                else { setTargetUrl(''); setCurrentMovie(null); }
+              }} 
+              hasTVPreferredFocus={true}
+            >
               <Text style={styles.barLink}>← INDIETRO</Text>
             </TouchableOpacity>
             <Text style={styles.barTitle}>SHIELD ATTIVO 🛡️</Text>
@@ -476,6 +514,12 @@ export default function App() {
             allowsInlineMediaPlayback={true}
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
+            
+            // IL SEGRETO È QUI: Aggiorniamo continuamente la memoria del Webview
+            onNavigationStateChange={(navState) => {
+              setCanGoBack(navState.canGoBack);
+            }}
+
             onMessage={async (e) => {
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
