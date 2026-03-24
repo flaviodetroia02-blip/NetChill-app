@@ -10,7 +10,7 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// IL TUO TELECOMANDO A DISTANZA SU GITHUB (Ora senza token, eterno!)
+// IL TUO TELECOMANDO A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 
 const GENRES = [
@@ -39,12 +39,12 @@ export default function App() {
   const [targetUrl, setTargetUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
-  const [canGoBack, setCanGoBack] = useState(false);
+  
+  // NUOVO STATO: Traccia l'indirizzo web in tempo reale
+  const [currentWebUrl, setCurrentWebUrl] = useState('');
 
-  // STATO DEL DOMINIO: Di default ha questo, ma poi legge GitHub in silenzio!
   const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunityz.love');
 
-  // STATI PER I PROFILI
   const [profiles, setProfiles] = useState([]);
   const [activeProfile, setActiveProfile] = useState(null);
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
@@ -57,19 +57,31 @@ export default function App() {
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // GESTIONE TASTO INDIETRO TV/TELEFONO
+  // --- FIX TV: IL TASTO INDIETRO INTELLIGENTE PER IL TELECOMANDO ---
   useEffect(() => {
     const backAction = () => {
       if (targetUrl) {
-        if (canGoBack && webViewRef.current) webViewRef.current.goBack();
-        else { setTargetUrl(''); setCurrentMovie(null); }
+        // Estrapola il nome del sito (es. "streamingcommunityz.love")
+        const domainPart = streamingDomain.split('//')[1] || streamingDomain;
+        
+        // Se l'URL in cui ci troviamo NON contiene il nome del sito, significa che un'ad ci ha reindirizzati
+        const isAd = currentWebUrl && !currentWebUrl.includes(domainPart);
+
+        if (isAd && webViewRef.current) {
+          // SE SEI SU UNA PUBBLICITÀ: Il tasto indietro della TV ti riporta al film
+          webViewRef.current.goBack();
+        } else {
+          // SE SEI SUL FILM: Il tasto indietro della TV chiude il player e ti riporta al catalogo
+          setTargetUrl('');
+          setCurrentMovie(null);
+        }
         return true; 
       }
       return false; 
     };
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [targetUrl, canGoBack]);
+  }, [targetUrl, currentWebUrl, streamingDomain]);
 
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
@@ -86,10 +98,8 @@ export default function App() {
     fetchDomainFromGitHub(); 
   }, []);
 
-  // IL ROBOT CHE LEGGE IL FILE SU GITHUB
   const fetchDomainFromGitHub = async () => {
     try {
-      // Aggiungiamo un parametro ant-cache per essere sicuri che legga sempre l'ultima versione!
       const response = await fetch(GITHUB_RAW_LINK + '?t=' + new Date().getTime());
       if (response.ok) {
         let text = await response.text();
@@ -195,10 +205,8 @@ export default function App() {
       
       setCurrentMovie(newItem);
 
-      // URL GENERATO CON LA VARIABILE LETTA DA GITHUB
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
-      setCanGoBack(false); 
     } catch (e) { console.error(e); }
   };
 
@@ -251,7 +259,6 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // IL TUO ROBOT DELLE 488 RIGHE
   const dynamicJS = `
     (function() {
       window.open = function() { return null; };
@@ -333,7 +340,6 @@ export default function App() {
     );
   }
 
-  // SCHERMATA PROFILI 
   if (!activeProfile) {
     return (
       <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -456,13 +462,8 @@ export default function App() {
       ) : (
         <View style={{flex: 1}}>
           <View style={styles.browserBar}>
-            <TouchableOpacity 
-              onPress={() => {
-                if (canGoBack && webViewRef.current) webViewRef.current.goBack();
-                else { setTargetUrl(''); setCurrentMovie(null); }
-              }} 
-              hasTVPreferredFocus={true}
-            >
+            {/* Tasti su schermo separati per sicurezza (utile su telefono) */}
+            <TouchableOpacity onPress={() => webViewRef.current?.goBack()} hasTVPreferredFocus={true}>
               <Text style={styles.barLink}>← INDIETRO</Text>
             </TouchableOpacity>
             <Text style={styles.barTitle}>SHIELD ATTIVO 🛡️</Text>
@@ -481,8 +482,9 @@ export default function App() {
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
             
+            // LEGGE IN TEMPO REALE DOVE SI TROVA IL BROWSER (CRUCIALE PER LA TV)
             onNavigationStateChange={(navState) => {
-              setCanGoBack(navState.canGoBack);
+              setCurrentWebUrl(navState.url);
             }}
 
             onMessage={async (e) => {
