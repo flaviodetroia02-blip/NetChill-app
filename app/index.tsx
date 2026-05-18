@@ -11,7 +11,7 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
 // IL TUO NUMERO DI VERSIONE ATTUALE (Aumentalo qui ogni volta che crei un nuovo APK)
-const APP_VERSION_CODE = 2; 
+const APP_VERSION_CODE = 5; 
 
 // I TUOI TELECOMANDI A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
@@ -34,6 +34,7 @@ export default function App() {
   const [sections, setSections] = useState({ trending: [], movies: [], series: [], searchResults: [] });
   const [continueWatching, setContinueWatching] = useState([]); 
   const [myList, setMyList] = useState([]); 
+  const [recommendations, setRecommendations] = useState([]);
   const [featured, setFeatured] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('home'); 
@@ -44,15 +45,15 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
 
-  const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunityz.love');
+  const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunity.garden');
 
   const [profiles, setProfiles] = useState([]);
   const [activeProfile, setActiveProfile] = useState(null);
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
 
-  // STATO PER L'AGGIORNAMENTO
   const [updateData, setUpdateData] = useState(null);
+  const [trailerKey, setTrailerKey] = useState(null);
 
   const webViewRef = useRef(null);
   const currentMovieRef = useRef(null);
@@ -60,6 +61,45 @@ export default function App() {
 
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
+
+  // --- MOTORE ALGORITMICO DI RACCOMANDAZIONE ---
+  const historyIds = continueWatching.map(x => x.id).join(',');
+  const listIds = myList.map(x => x.id).join(',');
+
+  useEffect(() => {
+    const buildRecommendations = async () => {
+      if (!activeProfile) return;
+      try {
+        const allItems = [...continueWatching, ...myList];
+        if (allItems.length === 0) {
+          setRecommendations([]);
+          return;
+        }
+
+        const genreCounts = {};
+        allItems.forEach(item => {
+          if (item.genre_ids && Array.isArray(item.genre_ids)) {
+            item.genre_ids.forEach(id => {
+              genreCounts[id] = (genreCounts[id] || 0) + 1;
+            });
+          }
+        });
+
+        const sortedGenres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
+        if (sortedGenres.length === 0) return;
+        const topGenre = sortedGenres[0];
+
+        const res = await fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc&with_genres=${topGenre}`).then(r => r.json());
+
+        const knownIds = new Set(allItems.map(i => i.id));
+        const freshMovies = res.results.filter(m => !knownIds.has(m.id)).slice(0, 10);
+
+        setRecommendations(freshMovies);
+      } catch(e) { console.log("Errore algoritmo", e); }
+    };
+
+    buildRecommendations();
+  }, [historyIds, listIds, activeProfile]);
 
   useEffect(() => {
     const backAction = () => {
@@ -86,22 +126,36 @@ export default function App() {
     fetchHomeData();
     loadInitialConfig();
     fetchDomainFromGitHub(); 
-    checkForUpdates(); // Controlla gli aggiornamenti all'avvio
+    checkForUpdates();
   }, []);
 
-  // --- IL MOTORE DEGLI AGGIORNAMENTI ---
   const checkForUpdates = async () => {
     try {
       const response = await fetch(GITHUB_UPDATE_LINK + '?t=' + new Date().getTime());
       if (response.ok) {
         const data = await response.json();
-        // Se il numero su GitHub è più alto di quello installato, mostra il popup!
         if (data.versionCode > APP_VERSION_CODE) {
           setUpdateData(data);
         }
       }
+    } catch (e) {}
+  };
+
+  const fetchTrailer = async (id, mediaType) => {
+    try {
+      const type = mediaType === 'tv' ? 'tv' : 'movie';
+      let res = await fetch(`https://api.themoviedb.org/3/${type}/${id}/videos?api_key=${TMDB_API_KEY}&language=it-IT`).then(r => r.json());
+      if (!res.results || res.results.length === 0) {
+        res = await fetch(`https://api.themoviedb.org/3/${type}/${id}/videos?api_key=${TMDB_API_KEY}&language=en-US`).then(r => r.json());
+      }
+      const trailer = res.results?.find(v => v.type === 'Trailer' && v.site === 'YouTube') || res.results?.find(v => v.site === 'YouTube') || res.results?.[0];
+      if (trailer) {
+        setTrailerKey(trailer.key);
+      } else {
+        setTrailerKey(null);
+      }
     } catch (e) {
-      console.log("Impossibile controllare gli aggiornamenti.");
+      setTrailerKey(null);
     }
   };
 
@@ -171,8 +225,11 @@ export default function App() {
     try {
       let currentList = [...myList];
       const exists = currentList.find(x => x.id === item.id);
-      if (exists) currentList = currentList.filter(x => x.id !== item.id);
-      else currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path });
+      if (exists) {
+        currentList = currentList.filter(x => x.id !== item.id);
+      } else {
+        currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path, genre_ids: item.genre_ids });
+      }
       setMyList(currentList);
       await AsyncStorage.setItem(`@my_list_${activeProfile.id}`, JSON.stringify(currentList));
     } catch (e) {}
@@ -187,11 +244,13 @@ export default function App() {
       const progressToSave = existing ? existing.progress : 0;
       const durationToSave = existing ? existing.duration : 0;
       const lastUrlToSave = existing ? existing.lastUrl : null; 
+      const episodeInfoToSave = existing ? existing.episodeInfo : null;
 
       currentHistory = currentHistory.filter(x => x.id !== item.id);
       const newItem = {
         id: item.id, title: item.title || item.name, poster_path: item.poster_path,
-        progress: progressToSave, duration: durationToSave, lastUrl: lastUrlToSave
+        progress: progressToSave, duration: durationToSave, lastUrl: lastUrlToSave, episodeInfo: episodeInfoToSave,
+        genre_ids: item.genre_ids || existing?.genre_ids 
       };
       
       const updatedList = [newItem, ...currentHistory].slice(0, 10);
@@ -199,7 +258,8 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
+      // --- FIX: RIMOSSO IL "/it" PER EVITARE L'ERRORE 404 ---
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
     } catch (e) {}
   };
@@ -218,7 +278,11 @@ export default function App() {
         fetch(`https://api.themoviedb.org/3/discover/tv?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc${gParam}`).then(res => res.json()),
       ]);
 
-      setFeatured(trending.results[0]);
+      const firstItem = trending.results[0];
+      setFeatured(firstItem);
+      if (firstItem) {
+        fetchTrailer(firstItem.id, firstItem.media_type);
+      }
       setSections({ trending: trending.results.slice(1, 15), movies: movies.results, series: series.results, searchResults: [] });
       setLoading(false);
     } catch (e) { setLoading(false); }
@@ -292,7 +356,11 @@ export default function App() {
               lastSaved = v.currentTime;
               try {
                 window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                  type: 'TIME_UPDATE', time: v.currentTime, duration: v.duration || 0, url: location.href 
+                  type: 'TIME_UPDATE', 
+                  time: v.currentTime, 
+                  duration: v.duration || 0, 
+                  url: location.href,
+                  pageTitle: document.title
                 }));
               } catch(e) {}
             }
@@ -367,7 +435,6 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
-      {/* POPUP AGGIORNAMENTO PREMIUM */}
       {updateData && (
         <Modal transparent={true} animationType="fade" visible={!!updateData}>
           <View style={styles.updateModalContainer}>
@@ -376,11 +443,7 @@ export default function App() {
               <Text style={styles.updateTitle}>Nuovo Aggiornamento</Text>
               <Text style={styles.updateDesc}>{updateData.message || "È disponibile una nuova versione. Aggiorna ora per la migliore esperienza possibile."}</Text>
               
-              <TouchableOpacity 
-                style={styles.updateBtn} 
-                onPress={() => Linking.openURL(updateData.url)}
-                hasTVPreferredFocus={true}
-              >
+              <TouchableOpacity style={styles.updateBtn} onPress={() => Linking.openURL(updateData.url)} hasTVPreferredFocus={true}>
                 <Text style={styles.updateBtnText}>SCARICA ORA</Text>
               </TouchableOpacity>
               
@@ -422,7 +485,21 @@ export default function App() {
           {view === 'home' ? (
             <>
               {featured && !loading && (
-                <ImageBackground source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={styles.hero}>
+                <View style={styles.hero}>
+                  {trailerKey ? (
+                    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                      <WebView
+                        style={{ flex: 1, backgroundColor: 'black' }}
+                        javaScriptEnabled={true}
+                        domStorageEnabled={true}
+                        allowsInlineMediaPlayback={true}
+                        mediaPlaybackRequiresUserAction={false}
+                        source={{ uri: `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&loop=1&playlist=${trailerKey}&rel=0&showinfo=0&modestbranding=1&iv_load_policy=3` }}
+                      />
+                    </View>
+                  ) : (
+                    <Image source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={StyleSheet.absoluteFill} />
+                  )}
                   <View style={styles.heroOverlay}>
                     <Text style={styles.heroTitle}>{featured.title || featured.name}</Text>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
@@ -434,13 +511,18 @@ export default function App() {
                       </TouchableOpacity>
                     </View>
                   </View>
-                </ImageBackground>
+                </View>
               )}
               {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 50}} /> : (
                 <View style={styles.content}>
                   {continueWatching.length > 0 && !selectedGenre && (
                     <Row title={`Continua a guardare, ${activeProfile.name}`} data={continueWatching} onPlay={startPlaying} isHistory myList={myList} onToggleList={toggleMyList} />
                   )}
+                  
+                  {recommendations.length > 0 && !selectedGenre && (
+                    <Row title={`Scelti per te, ${activeProfile.name}`} data={recommendations} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  )}
+
                   {myList.length > 0 && !selectedGenre && (
                     <Row title="La mia Lista" data={myList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   )}
@@ -494,6 +576,15 @@ export default function App() {
                   if (idx > -1) {
                     currentList[idx].progress = msg.time;
                     currentList[idx].duration = msg.duration;
+                    
+                    if (msg.pageTitle) {
+                      const matchStagione = msg.pageTitle.match(/Stagione\s*(\d+)/i);
+                      const matchEpisodio = msg.pageTitle.match(/Episodio\s*(\d+)/i);
+                      if (matchStagione && matchEpisodio) {
+                        currentList[idx].episodeInfo = `S${matchStagione[1]} E${matchEpisodio[1]}`;
+                      }
+                    }
+
                     if (streamingDomain && msg.url && msg.url.includes(streamingDomain.split('//')[1])) {
                       currentList[idx].lastUrl = msg.url;
                     }
@@ -528,6 +619,13 @@ const MovieCard = ({ item, onPlay, isHistory, myList = [], onToggleList }) => {
         <TouchableOpacity style={styles.overlayAddBtn} onPress={() => onToggleList(item)}>
           <Text style={{color: 'white', fontWeight: 'bold'}}>{inList ? '✓' : '+'}</Text>
         </TouchableOpacity>
+        
+        {item.episodeInfo && (
+          <View style={styles.episodeBadge}>
+            <Text style={styles.episodeBadgeText}>{item.episodeInfo}</Text>
+          </View>
+        )}
+
         {isHistory && (
           <View style={styles.progressContainer}>
             <View style={[styles.progressBar, { width: `${progressPercent}%` }]} />
@@ -561,7 +659,7 @@ const styles = StyleSheet.create({
   catTab: { paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, marginRight: 10, backgroundColor: '#111' },
   catActive: { backgroundColor: '#E50914' },
   catText: { color: '#666', fontWeight: 'bold', fontSize: 13 },
-  hero: { width: '100%', height: 450, justifyContent: 'flex-end' },
+  hero: { width: '100%', height: 450, justifyContent: 'flex-end', backgroundColor: '#000', overflow: 'hidden' },
   heroOverlay: { height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', padding: 30, alignItems: 'center' },
   heroTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', textAlign: 'center', marginBottom: 20 },
   playBtn: { backgroundColor: 'white', paddingVertical: 12, paddingHorizontal: 40, borderRadius: 5, marginRight: 10 },
@@ -581,11 +679,13 @@ const styles = StyleSheet.create({
   barLink: { color: '#E50914', fontWeight: 'bold', fontSize: 12 },
   barTitle: { color: '#444', fontSize: 10, fontWeight: 'bold' },
   
-  // STILI PER IL POPUP AGGIORNAMENTO PREMIUM
   updateModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  updateBox: { backgroundColor: '#141414', padding: 40, borderRadius: 15, alignItems: 'center', width: '100%', maxWidth: 450, borderWidth: 1, borderColor: '#333', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.8, shadowRadius: 20, elevation: 15 },
+  updateBox: { backgroundColor: '#141414', padding: 40, borderRadius: 15, alignItems: 'center', width: '100%', maxWidth: 450, borderWidth: 1, borderColor: '#333' },
   updateTitle: { color: 'white', fontSize: 24, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
   updateDesc: { color: '#999', fontSize: 16, textAlign: 'center', marginBottom: 30, lineHeight: 22 },
   updateBtn: { backgroundColor: '#E50914', paddingVertical: 15, paddingHorizontal: 30, borderRadius: 5, width: '100%', alignItems: 'center' },
-  updateBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 }
+  updateBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 },
+
+  episodeBadge: { position: 'absolute', top: 5, left: 5, backgroundColor: '#E50914', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, zIndex: 10 },
+  episodeBadgeText: { color: 'white', fontSize: 9, fontWeight: 'bold' }
 });
