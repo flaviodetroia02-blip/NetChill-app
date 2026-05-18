@@ -10,8 +10,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// IL TUO NUMERO DI VERSIONE ATTUALE 
-const APP_VERSION_CODE = 6; 
+// IL TUO NUMERO DI VERSIONE ATTUALE (AGGIORNATO ALLA 7)
+const APP_VERSION_CODE = 7; 
 
 // I TUOI TELECOMANDI A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
@@ -45,7 +45,7 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
 
-  // IMPOSTAZIONE DI BASE SU CB01
+  // IMPOSTAZIONE DI BASE
   const [streamingDomain, setStreamingDomain] = useState('https://cb01.tv');
 
   const [profiles, setProfiles] = useState([]);
@@ -256,8 +256,11 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      // PIANO B ATTIVATO: MOTORE DI RICERCA CB01
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(item.title || item.name)}`;
+      // FIX TITOLI: Rimuoviamo i caratteri speciali che fanno impazzire la barra di ricerca di CB01
+      const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ");
+
+      // MOTORE DI RICERCA CB01 CON TITOLO PULITO
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(cleanTitle)}`;
       setTargetUrl(finalUrl);
     } catch (e) {}
   };
@@ -313,41 +316,55 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // IL CLEANER ESTREMO PER CB01
+  // IL NUOVO SPARTANO AUTOCLICKER E CLEANER PER CB01
   const dynamicJS = `
     (function() {
-      // 1. UCCIDI TUTTI I POPUP
-      window.open = function() { console.log('Popup annientato'); return null; };
+      window.open = function() { return null; }; // Uccide i popup istantaneamente
       
       document.addEventListener('click', function(e) {
         let target = e.target.closest('a');
-        if (target && target.target === '_blank') {
-          target.target = '_self'; 
-        }
+        if (target && target.target === '_blank') target.target = '_self'; 
       }, true);
 
-      setInterval(() => {
-        // 2. DISTRUGGI ELEMENTI DI DISTURBO DI CB01/WORDPRESS
-        const junkSelectors = [
-          'header', 'footer', '#sidebar', '.sidebar', '.widget-area', 
-          '.comments-area', '#comments', '.menu', '.logo', '.social-share',
-          '.top-bar', '.navbar', '.breadcrumbs', '[class*="ads"]', '[id*="ads"]', 
-          '.overlay', '.pop-under', 'iframe[src*="ad"]'
-        ];
-        junkSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.style.display = 'none'));
+      // SE SIAMO NELLA PAGINA DI RICERCA (?s=)
+      if (window.location.search.includes('?s=')) {
+        document.body.style.display = 'none'; // Nascondi tutto lo schermo (diventa nero)
+        
+        // Aspetta mezzo secondo per far caricare la pagina e clicca il primo film!
+        setTimeout(() => {
+          const firstMovie = document.querySelector('.card a, article a, h2 a, .post-title a');
+          if (firstMovie && firstMovie.href) {
+            window.location.href = firstMovie.href; // Ti porta dentro il film da solo
+          } else {
+            // Se non trova niente, ti fa vedere un messaggio di errore al centro
+            document.body.style.display = 'flex';
+            document.body.style.justifyContent = 'center';
+            document.body.style.alignItems = 'center';
+            document.body.style.height = '100vh';
+            document.body.innerHTML = '<h2 style="color:white; font-family:sans-serif; text-align:center;">Film non trovato nel server<br><br>Torna indietro 😔</h2>';
+          }
+        }, 500);
+      } 
+      // SE SIAMO NELLA PAGINA DEL FILM (Fase di pulizia e player)
+      else {
+        setInterval(() => {
+          const junk = ['header', 'footer', '#sidebar', '.sidebar', '.widget-area', '#comments', '.menu', '.logo', '.ads', '.overlay', 'iframe[src*="ad"]'];
+          junk.forEach(s => document.querySelectorAll(s).forEach(el => el.style.display = 'none'));
 
-        // 3. ALLARGA E CENTRA IL CONTENUTO UTILE
-        const mainContent = document.querySelectorAll('main, #content, .content, #primary, article');
-        mainContent.forEach(el => {
-          el.style.width = '100%';
-          el.style.maxWidth = '100%';
-          el.style.padding = '10px';
-          el.style.margin = '0px';
-          el.style.backgroundColor = '#000';
-          el.style.color = '#fff';
-        });
-        document.body.style.backgroundColor = '#000';
-      }, 800);
+          const main = document.querySelectorAll('main, #content, .content, article');
+          main.forEach(el => {
+            el.style.width = '100%'; el.style.padding = '0'; el.style.margin = '0';
+          });
+          document.body.style.backgroundColor = '#000';
+          
+          // Prova a fare un piccolo scroll verso il video in automatico
+          const iframe = document.querySelector('iframe');
+          if (iframe && !window.hasScrolledToVideo) {
+             iframe.scrollIntoView({behavior: 'smooth', block: 'center'});
+             window.hasScrolledToVideo = true;
+          }
+        }, 800);
+      }
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href;
@@ -450,7 +467,7 @@ export default function App() {
                 </TouchableOpacity>
               )}
             </View>
-            <Text style={{ color: '#444', marginTop: 50, fontSize: 12 }}>Tieni premuto su un profilo per eliminarlo</Text>
+            <Text style={{ color: '#444', marginTop: 50, fontSize: 12 }}>Tieni premuto su un profilo per eliminare</Text>
           </View>
         )}
       </SafeAreaView>
@@ -467,7 +484,7 @@ export default function App() {
             <View style={styles.updateBox}>
               <Text style={[styles.logo, { fontSize: 32, marginBottom: 10 }]}>NETCHILL</Text>
               <Text style={styles.updateTitle}>Nuovo Aggiornamento</Text>
-              <Text style={styles.updateDesc}>{updateData.message || "È disponibile una nuova versione. Aggiorna ora per la migliore esperienza possibile."}</Text>
+              <Text style={styles.updateDesc}>{updateData.message || "È disponibile una nuova versione. Aggiorna ora."}</Text>
               
               <TouchableOpacity style={styles.updateBtn} onPress={() => Linking.openURL(updateData.url)} hasTVPreferredFocus={true}>
                 <Text style={styles.updateBtnText}>SCARICA ORA</Text>
@@ -514,14 +531,17 @@ export default function App() {
                 <View style={styles.hero}>
                   {trailerKey ? (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      {/* FIX YOUTUBE TRAILER CON ORIGIN FORZATO */}
+                      {/* FIX YOUTUBE DEFINITIVO: Inganna i server fingendo di essere la pagina web ufficiale */}
                       <WebView
                         style={{ flex: 1, backgroundColor: 'black' }}
                         javaScriptEnabled={true}
                         domStorageEnabled={true}
                         allowsInlineMediaPlayback={true}
                         mediaPlaybackRequiresUserAction={false}
-                        source={{ uri: `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&loop=1&playlist=${trailerKey}&rel=0&showinfo=0&modestbranding=1&playsinline=1&origin=https://www.youtube.com` }}
+                        source={{ 
+                          html: `<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="margin:0;padding:0;background-color:#000;"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&playsinline=1&rel=0" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe></body></html>`,
+                          baseUrl: 'https://www.youtube.com' 
+                        }}
                       />
                     </View>
                   ) : (
