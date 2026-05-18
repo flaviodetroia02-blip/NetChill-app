@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, BackHandler, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, BackHandler, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 // --- CONFIGURAZIONE ---
@@ -10,8 +10,12 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// IL TUO TELECOMANDO A DISTANZA SU GITHUB
+// IL TUO NUMERO DI VERSIONE ATTUALE (Aumentalo qui ogni volta che crei un nuovo APK)
+const APP_VERSION_CODE = 2; 
+
+// I TUOI TELECOMANDI A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
+const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
 
 const GENRES = [
   { id: null, name: 'Tutti' },
@@ -47,6 +51,9 @@ export default function App() {
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
 
+  // STATO PER L'AGGIORNAMENTO
+  const [updateData, setUpdateData] = useState(null);
+
   const webViewRef = useRef(null);
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
@@ -54,11 +61,9 @@ export default function App() {
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // --- FIX: GESTIONE TASTO INDIETRO (SOLO FORZATURA WEBVIEW) ---
   useEffect(() => {
     const backAction = () => {
       if (targetUrl) {
-        // Se sei nel player, il tasto fisico indietro FORZA sempre la pagina indietro. Non chiude MAI il film.
         if (webViewRef.current) webViewRef.current.goBack();
         return true; 
       }
@@ -81,7 +86,24 @@ export default function App() {
     fetchHomeData();
     loadInitialConfig();
     fetchDomainFromGitHub(); 
+    checkForUpdates(); // Controlla gli aggiornamenti all'avvio
   }, []);
+
+  // --- IL MOTORE DEGLI AGGIORNAMENTI ---
+  const checkForUpdates = async () => {
+    try {
+      const response = await fetch(GITHUB_UPDATE_LINK + '?t=' + new Date().getTime());
+      if (response.ok) {
+        const data = await response.json();
+        // Se il numero su GitHub è più alto di quello installato, mostra il popup!
+        if (data.versionCode > APP_VERSION_CODE) {
+          setUpdateData(data);
+        }
+      }
+    } catch (e) {
+      console.log("Impossibile controllare gli aggiornamenti.");
+    }
+  };
 
   const fetchDomainFromGitHub = async () => {
     try {
@@ -92,12 +114,9 @@ export default function App() {
         if (text.startsWith('http')) {
           if (text.endsWith('/')) text = text.slice(0, -1);
           setStreamingDomain(text);
-          console.log("Dominio aggiornato da GitHub:", text);
         }
       }
-    } catch (e) {
-      console.log("Impossibile leggere GitHub, uso dominio di default.");
-    }
+    } catch (e) {}
   };
 
   const loadInitialConfig = async () => {
@@ -131,16 +150,11 @@ export default function App() {
 
   const createProfile = async () => {
     if (newProfileName.trim() === '' || profiles.length >= 4) return;
-    const newProfile = {
-      id: Date.now().toString(),
-      name: newProfileName.trim(),
-      avatar: AVATARS[Math.floor(Math.random() * AVATARS.length)]
-    };
+    const newProfile = { id: Date.now().toString(), name: newProfileName.trim(), avatar: AVATARS[Math.floor(Math.random() * AVATARS.length)] };
     const updatedProfiles = [...profiles, newProfile];
     setProfiles(updatedProfiles);
     await AsyncStorage.setItem('@profiles', JSON.stringify(updatedProfiles));
-    setNewProfileName('');
-    setIsCreatingProfile(false);
+    setNewProfileName(''); setIsCreatingProfile(false);
   };
 
   const deleteProfile = async (id) => {
@@ -157,15 +171,11 @@ export default function App() {
     try {
       let currentList = [...myList];
       const exists = currentList.find(x => x.id === item.id);
-      
-      if (exists) {
-        currentList = currentList.filter(x => x.id !== item.id);
-      } else {
-        currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path });
-      }
+      if (exists) currentList = currentList.filter(x => x.id !== item.id);
+      else currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path });
       setMyList(currentList);
       await AsyncStorage.setItem(`@my_list_${activeProfile.id}`, JSON.stringify(currentList));
-    } catch (e) { console.error(e); }
+    } catch (e) {}
   };
 
   const startPlaying = async (item) => {
@@ -187,12 +197,11 @@ export default function App() {
       const updatedList = [newItem, ...currentHistory].slice(0, 10);
       setContinueWatching(updatedList);
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
-      
       setCurrentMovie(newItem);
 
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/it/search?q=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
-    } catch (e) { console.error(e); }
+    } catch (e) {}
   };
 
   const fetchHomeData = async (genreId = null) => {
@@ -212,7 +221,7 @@ export default function App() {
       setFeatured(trending.results[0]);
       setSections({ trending: trending.results.slice(1, 15), movies: movies.results, series: series.results, searchResults: [] });
       setLoading(false);
-    } catch (e) { console.error(e); setLoading(false); }
+    } catch (e) { setLoading(false); }
   };
 
   const handleSearch = async () => {
@@ -221,7 +230,7 @@ export default function App() {
     try {
       const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&language=it-IT&query=${encodeURIComponent(searchQuery)}`).then(r => r.json());
       setSections(prev => ({ ...prev, searchResults: res.results }));
-    } catch (e) { console.error(e); }
+    } catch (e) {}
     setLoading(false);
   };
 
@@ -230,9 +239,7 @@ export default function App() {
       const { sound } = await Audio.Sound.createAsync(require('../assets/images/tudum.mp3'));
       await sound.playAsync();
     } catch (e) {}
-
     const letterAnimations = letterAnims.map(anim => Animated.spring(anim, { toValue: 1, friction: 5, tension: 60, useNativeDriver: false }));
-
     Animated.sequence([
       Animated.stagger(120, letterAnimations), 
       Animated.timing(glowAnim, { toValue: 1, duration: 500, useNativeDriver: false }), 
@@ -263,11 +270,8 @@ export default function App() {
 
         const trySeek = () => {
           if (!hasSeeked && v.readyState >= 1) {
-            if (Math.abs(v.currentTime - initialSavedTime) > 3) {
-              v.currentTime = initialSavedTime;
-            } else {
-              hasSeeked = true; 
-            }
+            if (Math.abs(v.currentTime - initialSavedTime) > 3) { v.currentTime = initialSavedTime; } 
+            else { hasSeeked = true; }
           }
         };
 
@@ -281,30 +285,21 @@ export default function App() {
 
         v.addEventListener('timeupdate', () => {
           if (location.href !== currentUrl) {
-            currentUrl = location.href;
-            hasSeeked = true; 
-            initialSavedTime = 0;
+            currentUrl = location.href; hasSeeked = true; initialSavedTime = 0;
           }
-
           if (hasSeeked && v.currentTime > 0 && !v.paused) {
             if (Math.abs(v.currentTime - lastSaved) > 5) {
               lastSaved = v.currentTime;
               try {
                 window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                  type: 'TIME_UPDATE', 
-                  time: v.currentTime, 
-                  duration: v.duration || 0,
-                  url: location.href 
+                  type: 'TIME_UPDATE', time: v.currentTime, duration: v.duration || 0, url: location.href 
                 }));
               } catch(e) {}
             }
           }
         });
       }
-
-      setInterval(() => {
-        document.querySelectorAll('video').forEach(attachToVideo);
-      }, 1000);
+      setInterval(() => { document.querySelectorAll('video').forEach(attachToVideo); }, 1000);
     })();
     true;
   `;
@@ -372,11 +367,33 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
+      {/* POPUP AGGIORNAMENTO PREMIUM */}
+      {updateData && (
+        <Modal transparent={true} animationType="fade" visible={!!updateData}>
+          <View style={styles.updateModalContainer}>
+            <View style={styles.updateBox}>
+              <Text style={[styles.logo, { fontSize: 32, marginBottom: 10 }]}>NETCHILL</Text>
+              <Text style={styles.updateTitle}>Nuovo Aggiornamento</Text>
+              <Text style={styles.updateDesc}>{updateData.message || "È disponibile una nuova versione. Aggiorna ora per la migliore esperienza possibile."}</Text>
+              
+              <TouchableOpacity 
+                style={styles.updateBtn} 
+                onPress={() => Linking.openURL(updateData.url)}
+                hasTVPreferredFocus={true}
+              >
+                <Text style={styles.updateBtnText}>SCARICA ORA</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={{ marginTop: 20 }} onPress={() => setUpdateData(null)}>
+                <Text style={{ color: '#666', fontWeight: 'bold' }}>Ricordamelo più tardi</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       <View style={styles.header}>
-        <TouchableOpacity 
-          onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}}
-          hasTVPreferredFocus={view !== 'search'}
-        >
+        <TouchableOpacity onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}} hasTVPreferredFocus={view !== 'search'}>
           <Text style={styles.logo}>NETCHILL</Text>
         </TouchableOpacity>
         
@@ -447,19 +464,10 @@ export default function App() {
       ) : (
         <View style={{flex: 1}}>
           <View style={styles.browserBar}>
-            {/* --- FIX: IL TASTO INDIETRO ORA FORZA SOLO IL RITORNO ALLA PAGINA PRECEDENTE --- */}
-            <TouchableOpacity 
-              onPress={() => {
-                if (webViewRef.current) webViewRef.current.goBack();
-              }} 
-              hasTVPreferredFocus={true}
-            >
+            <TouchableOpacity onPress={() => { if (webViewRef.current) webViewRef.current.goBack(); }} hasTVPreferredFocus={true}>
               <Text style={styles.barLink}>← INDIETRO</Text>
             </TouchableOpacity>
-            
             <Text style={styles.barTitle}>SHIELD ATTIVO 🛡️</Text>
-            
-            {/* --- FIX: SOLO IL TASTO CHIUDI TI RIPORTA ALLA HOME DELL'APP --- */}
             <TouchableOpacity onPress={() => { setTargetUrl(''); setCurrentMovie(null); }}>
               <Text style={styles.barLink}>CHIUDI</Text>
             </TouchableOpacity>
@@ -467,14 +475,16 @@ export default function App() {
           
           <WebView 
             ref={webViewRef}
-            source={{ uri: targetUrl }}
+            source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
+            userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
             injectedJavaScript={dynamicJS}
             injectedJavaScriptForMainFrameOnly={false} 
             style={{ flex: 1 }}
             allowsInlineMediaPlayback={true}
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
-            
             onMessage={async (e) => {
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
@@ -569,5 +579,13 @@ const styles = StyleSheet.create({
   searchGrid: { padding: 10 },
   browserBar: { backgroundColor: '#111', padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   barLink: { color: '#E50914', fontWeight: 'bold', fontSize: 12 },
-  barTitle: { color: '#444', fontSize: 10, fontWeight: 'bold' }
+  barTitle: { color: '#444', fontSize: 10, fontWeight: 'bold' },
+  
+  // STILI PER IL POPUP AGGIORNAMENTO PREMIUM
+  updateModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  updateBox: { backgroundColor: '#141414', padding: 40, borderRadius: 15, alignItems: 'center', width: '100%', maxWidth: 450, borderWidth: 1, borderColor: '#333', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.8, shadowRadius: 20, elevation: 15 },
+  updateTitle: { color: 'white', fontSize: 24, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
+  updateDesc: { color: '#999', fontSize: 16, textAlign: 'center', marginBottom: 30, lineHeight: 22 },
+  updateBtn: { backgroundColor: '#E50914', paddingVertical: 15, paddingHorizontal: 30, borderRadius: 5, width: '100%', alignItems: 'center' },
+  updateBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 }
 });
