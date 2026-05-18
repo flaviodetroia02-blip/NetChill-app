@@ -10,8 +10,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// IL TUO NUMERO DI VERSIONE ATTUALE (AGGIORNATO ALLA 7)
-const APP_VERSION_CODE = 7; 
+// IL TUO NUMERO DI VERSIONE ATTUALE (AGGIORNATO ALLA 8)
+const APP_VERSION_CODE = 8; 
 
 // I TUOI TELECOMANDI A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
@@ -256,11 +256,18 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      // FIX TITOLI: Rimuoviamo i caratteri speciali che fanno impazzire la barra di ricerca di CB01
-      const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ");
+      // --- IL CECCHINO DEI TITOLI ---
+      // 1. Puliamo il titolo dai due punti e trattini
+      const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
+      
+      // 2. Estraiamo l'anno esatto di uscita dal database grafico
+      const releaseYear = item.release_date ? item.release_date.split('-')[0] : (item.first_air_date ? item.first_air_date.split('-')[0] : '');
+      
+      // 3. Uniamo Titolo e Anno (es: "The Batman 2022")
+      const exactSearch = releaseYear ? `${cleanTitle} ${releaseYear}` : cleanTitle;
 
-      // MOTORE DI RICERCA CB01 CON TITOLO PULITO
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(cleanTitle)}`;
+      // 4. Inviamo la ricerca perfetta a Cineblog
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(exactSearch)}`;
       setTargetUrl(finalUrl);
     } catch (e) {}
   };
@@ -531,7 +538,7 @@ export default function App() {
                 <View style={styles.hero}>
                   {trailerKey ? (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      {/* FIX YOUTUBE DEFINITIVO: Inganna i server fingendo di essere la pagina web ufficiale */}
+                      {/* FIX YOUTUBE DEFINITIVO */}
                       <WebView
                         style={{ flex: 1, backgroundColor: 'black' }}
                         javaScriptEnabled={true}
