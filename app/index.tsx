@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, BackHandler, Image, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Linking } from 'react-native';
+import { ActivityIndicator, Animated, BackHandler, Image, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 // --- CONFIGURAZIONE ---
@@ -10,8 +10,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// IL TUO NUMERO DI VERSIONE ATTUALE (Aumentalo qui ogni volta che crei un nuovo APK)
-const APP_VERSION_CODE = 5; 
+// IL TUO NUMERO DI VERSIONE ATTUALE 
+const APP_VERSION_CODE = 6; 
 
 // I TUOI TELECOMANDI A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
@@ -45,7 +45,8 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
 
-  const [streamingDomain, setStreamingDomain] = useState('https://streamingcommunity.garden');
+  // IMPOSTAZIONE DI BASE SU CB01
+  const [streamingDomain, setStreamingDomain] = useState('https://cb01.tv');
 
   const [profiles, setProfiles] = useState([]);
   const [activeProfile, setActiveProfile] = useState(null);
@@ -62,7 +63,6 @@ export default function App() {
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
-  // --- MOTORE ALGORITMICO DI RACCOMANDAZIONE ---
   const historyIds = continueWatching.map(x => x.id).join(',');
   const listIds = myList.map(x => x.id).join(',');
 
@@ -118,8 +118,6 @@ export default function App() {
   const glowAnim = useRef(new Animated.Value(0)).current; 
   const LETTERS = "NETCHILL".split("");
   const letterAnims = useRef(LETTERS.map(() => new Animated.Value(0))).current;
-
-  const player = useVideoPlayer(videoUrl, p => { if (videoUrl) p.play(); });
 
   useEffect(() => {
     startCinematicSplash();
@@ -258,8 +256,8 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      // --- FIX: RIMOSSO IL "/it" PER EVITARE L'ERRORE 404 ---
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/search?q=${encodeURIComponent(item.title || item.name)}`;
+      // PIANO B ATTIVATO: MOTORE DI RICERCA CB01
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(item.title || item.name)}`;
       setTargetUrl(finalUrl);
     } catch (e) {}
   };
@@ -315,13 +313,41 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
+  // IL CLEANER ESTREMO PER CB01
   const dynamicJS = `
     (function() {
-      window.open = function() { return null; };
+      // 1. UCCIDI TUTTI I POPUP
+      window.open = function() { console.log('Popup annientato'); return null; };
+      
+      document.addEventListener('click', function(e) {
+        let target = e.target.closest('a');
+        if (target && target.target === '_blank') {
+          target.target = '_self'; 
+        }
+      }, true);
+
       setInterval(() => {
-        const adSelectors = ['[class*="ads"]', '[id*="ads"]', '.overlay', '.pop-under', 'div[style*="z-index: 9999"]'];
-        adSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
-      }, 1000);
+        // 2. DISTRUGGI ELEMENTI DI DISTURBO DI CB01/WORDPRESS
+        const junkSelectors = [
+          'header', 'footer', '#sidebar', '.sidebar', '.widget-area', 
+          '.comments-area', '#comments', '.menu', '.logo', '.social-share',
+          '.top-bar', '.navbar', '.breadcrumbs', '[class*="ads"]', '[id*="ads"]', 
+          '.overlay', '.pop-under', 'iframe[src*="ad"]'
+        ];
+        junkSelectors.forEach(s => document.querySelectorAll(s).forEach(el => el.style.display = 'none'));
+
+        // 3. ALLARGA E CENTRA IL CONTENUTO UTILE
+        const mainContent = document.querySelectorAll('main, #content, .content, #primary, article');
+        mainContent.forEach(el => {
+          el.style.width = '100%';
+          el.style.maxWidth = '100%';
+          el.style.padding = '10px';
+          el.style.margin = '0px';
+          el.style.backgroundColor = '#000';
+          el.style.color = '#fff';
+        });
+        document.body.style.backgroundColor = '#000';
+      }, 800);
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href;
@@ -488,13 +514,14 @@ export default function App() {
                 <View style={styles.hero}>
                   {trailerKey ? (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                      {/* FIX YOUTUBE TRAILER CON ORIGIN FORZATO */}
                       <WebView
                         style={{ flex: 1, backgroundColor: 'black' }}
                         javaScriptEnabled={true}
                         domStorageEnabled={true}
                         allowsInlineMediaPlayback={true}
                         mediaPlaybackRequiresUserAction={false}
-                        source={{ uri: `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&loop=1&playlist=${trailerKey}&rel=0&showinfo=0&modestbranding=1&iv_load_policy=3` }}
+                        source={{ uri: `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&loop=1&playlist=${trailerKey}&rel=0&showinfo=0&modestbranding=1&playsinline=1&origin=https://www.youtube.com` }}
                       />
                     </View>
                   ) : (
@@ -563,7 +590,7 @@ export default function App() {
             thirdPartyCookiesEnabled={true}
             injectedJavaScript={dynamicJS}
             injectedJavaScriptForMainFrameOnly={false} 
-            style={{ flex: 1 }}
+            style={{ flex: 1, backgroundColor: '#000' }}
             allowsInlineMediaPlayback={true}
             allowsFullscreenVideo={true}
             mediaPlaybackRequiresUserAction={false}
