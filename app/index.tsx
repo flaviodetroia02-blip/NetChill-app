@@ -9,8 +9,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// VERSIONE 17 - EFFETTO PRIME VIDEO (Trailer Ritardato + Sensore Scroll + Bypass 153)
-const APP_VERSION_CODE = 17; 
+// VERSIONE 20 - HACK YOUTUBE MOBILE (Bypass Errore 152/153) + EFFETTO PRIME VIDEO + FIX CB01 MOBILE
+const APP_VERSION_CODE = 20; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -72,7 +72,6 @@ export default function App() {
   const startTrailerTimer = () => {
     clearTimeout(trailerTimeout.current);
     trailerTimeout.current = setTimeout(() => {
-      // Se dopo 3 secondi l'utente è ancora in cima alla pagina, fai partire il video
       if (scrollY.current < 150) {
         setShowTrailer(true);
       }
@@ -92,14 +91,11 @@ export default function App() {
     scrollY.current = y;
 
     if (y > 150 && showTrailer) {
-      // Spegne il trailer appena scendi giù
       setShowTrailer(false);
     } else if (y <= 150 && !showTrailer && trailerKey) {
-      // Riavvia il timer se torni su
       startTrailerTimer();
     }
   };
-  // ----------------------------------------
 
   useEffect(() => {
     const buildRecommendations = async () => {
@@ -321,6 +317,50 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
+  // 🔴 LA CHIAVE DELLA VERSIONE 20: HACKERARE IL SITO MOBILE DI YOUTUBE 🔴
+  const ytInject = `
+    (function() {
+      // 1. Schermo nero istantaneo per nascondere la grafica di YouTube
+      const css = document.createElement('style');
+      css.innerHTML = 'body, html { background-color: #000 !important; overflow: hidden !important; } ytm-app, ytm-consent-bump-v2-renderer, header, ytm-header-bar, .spinner, .ytp-spinner, ytm-related-shelf-renderer, ytm-item-section-renderer, .ytp-chrome-top, .ytp-chrome-bottom { display: none !important; opacity: 0 !important; }';
+      document.head.appendChild(css);
+      
+      setInterval(() => {
+        // 2. Distruttore di Cookie Wall (Accetta tutto in automatico se YouTube lo chiede)
+        const buttons = document.querySelectorAll('button');
+        buttons.forEach(btn => {
+          const txt = (btn.textContent || '').toLowerCase();
+          if (txt.includes('accetta tutto') || txt.includes('accept all')) btn.click();
+        });
+
+        // 3. Prendi il video nudo e crudo e forzalo a schermo intero effetto Cover
+        const v = document.querySelector('video');
+        if (v) {
+          v.muted = true; // Obbligatorio per scavalcare il blocco autoplay del telefono
+          if (v.paused) v.play();
+          
+          v.style.position = 'fixed'; 
+          v.style.top = '50%'; 
+          v.style.left = '50%'; 
+          v.style.transform = 'translate(-50%, -50%)'; 
+          v.style.width = '100vw'; 
+          v.style.height = '56.25vw'; /* Mantiene le proporzioni 16:9 */
+          v.style.minHeight = '100vh'; /* Copre tutta l'altezza dello schermo (taglia i lati) */
+          v.style.minWidth = '177.77vh'; 
+          v.style.objectFit = 'cover'; 
+          v.style.zIndex = '99999'; 
+          v.style.pointerEvents = 'none'; /* Impedisce che il tuo dito blocchi il video */
+        }
+        
+        // 4. Forza la partenza cliccando tasti play finti se appaiono
+        const playBtn = document.querySelector('.ytp-large-play-button') || document.querySelector('.icon-button');
+        if (playBtn && playBtn.style.display !== 'none') playBtn.click();
+      }, 500);
+    })();
+    true;
+  `;
+
+  // SCRIPT PER CB01
   const dynamicJS = `
     (function() {
       const tvStyle = document.createElement('style');
@@ -336,9 +376,9 @@ export default function App() {
         .short img { transform: scale(1.1) !important; border-radius: 12px !important; margin-bottom: 15px !important; }
         .story-heading { font-size: 26px !important; margin-top: 20px !important; font-family: sans-serif !important; }
         .story-heading a { color: #ffffff !important; text-decoration: none !important; }
-        .story-heading a:focus, .story-heading a:active { color: #E50914 !important; }
+        
         iframe#iFrameResizer0, iframe, .video-container {
-          width: 95vw !important; height: 80vh !important; border-radius: 12px !important; border: 2px solid #222 !important; margin-top: 15px !important; box-shadow: 0px 10px 30px rgba(0,0,0,0.8) !important;
+          width: 100% !important; max-width: 900px !important; aspect-ratio: 16 / 9 !important; height: auto !important; border-radius: 12px !important; border: 2px solid #222 !important; margin-top: 15px !important; box-shadow: 0px 10px 30px rgba(0,0,0,0.8) !important;
         }
       \`;
       document.documentElement.appendChild(tvStyle); 
@@ -360,6 +400,13 @@ export default function App() {
           const style = window.getComputedStyle(el);
           if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 50) {
             if (!el.contains(document.querySelector('iframe')) && !el.contains(document.querySelector('video'))) el.remove();
+          }
+        });
+
+        document.querySelectorAll('a, div, p, span, strong').forEach(el => {
+          const txt = (el.textContent || '').toLowerCase();
+          if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis')) {
+            el.style.display = 'none';
           }
         });
         
@@ -523,32 +570,24 @@ export default function App() {
       )}
 
       {!targetUrl ? (
-        // SCROLLVIEW CON SENSORE PER L'EFFETTO PRIME VIDEO
         <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
           {view === 'home' ? (
             <>
               {featured && !loading && (
                 <View style={styles.hero}>
-                  
-                  {/* IMMAGINE DI COPERTINA (Scompare se parte il trailer) */}
                   <Image source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer ? 0 : 1 }]} />
-                  
-                  {/* TRAILER VIDEO (Appare solo dopo 3 secondi se non hai scrollato) */}
                   {trailerKey && showTrailer && (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      {/* TRUCCO 153: Usiamo youtube-nocookie e forziamo il Referer per bypassare il blocco copyright */}
+                      {/* CAVALLO DI TROIA: URL DIRETTO, NESSUN EMBED, BYPASS ERRORE 152/153 */}
                       <WebView
                         style={{ flex: 1, backgroundColor: 'black' }}
                         javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
-                        source={{ 
-                          uri: `https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&playsinline=1&showinfo=0&rel=0&modestbranding=1`,
-                          headers: { 'Referer': 'https://www.youtube.com/' } 
-                        }}
+                        source={{ uri: `https://m.youtube.com/watch?v=${trailerKey}` }}
+                        injectedJavaScript={ytInject}
+                        injectedJavaScriptForMainFrameOnly={false}
                       />
                     </View>
                   )}
-
-                  {/* SFUMATURA E PULSANTI (Leggermente trasparenti se c'è il trailer sotto) */}
                   <View style={[styles.heroOverlay, { backgroundColor: showTrailer ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.6)' }]}>
                     <Text style={styles.heroTitle}>{featured.title || featured.name}</Text>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
