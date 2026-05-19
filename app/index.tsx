@@ -9,8 +9,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// VERSIONE 20 - HACK YOUTUBE MOBILE (Bypass Errore 152/153) + EFFETTO PRIME VIDEO + FIX CB01 MOBILE
-const APP_VERSION_CODE = 20; 
+// VERSIONE 22 - CENSURA TOTALE DI CB01 E PULIZIA ESTETICA
+const APP_VERSION_CODE = 22; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -45,6 +45,7 @@ export default function App() {
 
   // --- STATI PER L'EFFETTO PRIME VIDEO ---
   const [showTrailer, setShowTrailer] = useState(false);
+  const [isTrailerMuted, setIsTrailerMuted] = useState(true); 
   const scrollY = useRef(0);
   const trailerTimeout = useRef(null);
 
@@ -59,6 +60,7 @@ export default function App() {
   const [trailerKey, setTrailerKey] = useState(null);
 
   const webViewRef = useRef(null);
+  const trailerWebViewRef = useRef(null); 
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
@@ -68,7 +70,6 @@ export default function App() {
   const historyIds = continueWatching.map(x => x.id).join(',');
   const listIds = myList.map(x => x.id).join(',');
 
-  // --- LOGICA TIMER TRAILER PRIME VIDEO ---
   const startTrailerTimer = () => {
     clearTimeout(trailerTimeout.current);
     trailerTimeout.current = setTimeout(() => {
@@ -81,6 +82,7 @@ export default function App() {
   useEffect(() => {
     if (featured && trailerKey) {
       setShowTrailer(false);
+      setIsTrailerMuted(true); 
       startTrailerTimer();
     }
     return () => clearTimeout(trailerTimeout.current);
@@ -92,8 +94,22 @@ export default function App() {
 
     if (y > 150 && showTrailer) {
       setShowTrailer(false);
+      setIsTrailerMuted(true); 
     } else if (y <= 150 && !showTrailer && trailerKey) {
       startTrailerTimer();
+    }
+  };
+
+  const toggleTrailerAudio = () => {
+    const newMutedState = !isTrailerMuted;
+    setIsTrailerMuted(newMutedState);
+    if (trailerWebViewRef.current) {
+      trailerWebViewRef.current.injectJavaScript(`
+        window.isAppMuted = ${newMutedState};
+        var v = document.querySelector('video');
+        if(v) { v.muted = ${newMutedState}; }
+        true;
+      `);
     }
   };
 
@@ -317,58 +333,54 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // 🔴 LA CHIAVE DELLA VERSIONE 20: HACKERARE IL SITO MOBILE DI YOUTUBE 🔴
+  // SCRIPT YOUTUBE
   const ytInject = `
     (function() {
-      // 1. Schermo nero istantaneo per nascondere la grafica di YouTube
+      window.isAppMuted = true;
       const css = document.createElement('style');
-      css.innerHTML = 'body, html { background-color: #000 !important; overflow: hidden !important; } ytm-app, ytm-consent-bump-v2-renderer, header, ytm-header-bar, .spinner, .ytp-spinner, ytm-related-shelf-renderer, ytm-item-section-renderer, .ytp-chrome-top, .ytp-chrome-bottom { display: none !important; opacity: 0 !important; }';
+      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, ytm-item-section-renderer, .page-container, .related-items-container, ytm-promoted-sparkles-web-renderer, .ad-showing, ytm-consent-bump-v2-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 999999 !important; background: #000 !important; }';
       document.head.appendChild(css);
       
+      let initDone = false;
+      
       setInterval(() => {
-        // 2. Distruttore di Cookie Wall (Accetta tutto in automatico se YouTube lo chiede)
-        const buttons = document.querySelectorAll('button');
-        buttons.forEach(btn => {
-          const txt = (btn.textContent || '').toLowerCase();
-          if (txt.includes('accetta tutto') || txt.includes('accept all')) btn.click();
+        document.querySelectorAll('button').forEach(btn => {
+          if ((btn.textContent||'').toLowerCase().includes('accetta')) btn.click();
         });
-
-        // 3. Prendi il video nudo e crudo e forzalo a schermo intero effetto Cover
-        const v = document.querySelector('video');
+        
+        var v = document.querySelector('video');
         if (v) {
-          v.muted = true; // Obbligatorio per scavalcare il blocco autoplay del telefono
-          if (v.paused) v.play();
-          
-          v.style.position = 'fixed'; 
-          v.style.top = '50%'; 
-          v.style.left = '50%'; 
-          v.style.transform = 'translate(-50%, -50%)'; 
-          v.style.width = '100vw'; 
-          v.style.height = '56.25vw'; /* Mantiene le proporzioni 16:9 */
-          v.style.minHeight = '100vh'; /* Copre tutta l'altezza dello schermo (taglia i lati) */
-          v.style.minWidth = '177.77vh'; 
-          v.style.objectFit = 'cover'; 
-          v.style.zIndex = '99999'; 
-          v.style.pointerEvents = 'none'; /* Impedisce che il tuo dito blocchi il video */
+          if(!initDone) {
+            v.muted = true; 
+            initDone = true;
+          } else {
+            v.muted = window.isAppMuted; 
+          }
+          if (v.paused) v.play().catch(e=>{});
         }
         
-        // 4. Forza la partenza cliccando tasti play finti se appaiono
-        const playBtn = document.querySelector('.ytp-large-play-button') || document.querySelector('.icon-button');
+        var playBtn = document.querySelector('.ytp-large-play-button') || document.querySelector('.icon-button');
         if (playBtn && playBtn.style.display !== 'none') playBtn.click();
+        
+        var adSkip = document.querySelector('.ytp-ad-skip-button') || document.querySelector('.ytp-skip-ad-button');
+        if(adSkip) adSkip.click();
       }, 500);
     })();
     true;
   `;
 
-  // SCRIPT PER CB01
+  // 🔴 VERSIONE 22: CENSURA DI OGNI RIFERIMENTO A CB01 E RICERCA 🔴
   const dynamicJS = `
     (function() {
       const tvStyle = document.createElement('style');
       tvStyle.innerHTML = \`
         html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-        header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb { 
+        
+        /* Nasconde header, menu e moduli di ricerca nativi (form) */
+        header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb, form, center, .speedbar, .berrors { 
           display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
         }
+        
         #dle-content, main, .content, article { 
           width: 100vw !important; max-width: 100% !important; padding: 20px !important; margin: 0 auto !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; align-items: center !important;
         }
@@ -396,6 +408,7 @@ export default function App() {
       }, true);
 
       setInterval(() => {
+        // Overlay anti-bot
         document.querySelectorAll('div').forEach(el => {
           const style = window.getComputedStyle(el);
           if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 50) {
@@ -403,13 +416,25 @@ export default function App() {
           }
         });
 
-        document.querySelectorAll('a, div, p, span, strong').forEach(el => {
-          const txt = (el.textContent || '').toLowerCase();
-          if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis')) {
-            el.style.display = 'none';
+        // 🔴 MIETITORE DI PAROLE CHIAVE (Censura CB01, testi SEO e finti download) 🔴
+        document.querySelectorAll('h1, h2, h3, h4, p, div, span, b, strong').forEach(el => {
+          if (el.children.length < 3) { 
+            const txt = (el.textContent || '').toLowerCase();
+            if (
+              txt.includes('cliccaci per') || 
+              txt.includes('scarica download') || 
+              txt.includes('hd/4k gratis') ||
+              txt.includes('l\\'indirizzo ufficiale') ||
+              txt.includes('cerca su cb01') ||
+              txt.includes('film streaming e download') ||
+              txt.includes('risultati di ricerca')
+            ) {
+              el.style.display = 'none';
+            }
           }
         });
         
+        // Scroll player
         if (!window.location.href.includes('do=search') && !window.location.href.includes('/search/')) {
           const playerFrame = document.querySelector('iframe#iFrameResizer0') || document.querySelector('iframe');
           if (playerFrame && !window.hasScrolledToVideo) {
@@ -419,6 +444,7 @@ export default function App() {
         }
       }, 500);
 
+      // Errore custom in caso di ricerca vuota
       if (window.location.href.includes('do=search') || window.location.href.includes('/search/')) {
         setTimeout(() => {
           if (document.body.innerText.includes('Nessun Film risponde ai criteri di ricerca impostati') || document.body.innerText.includes('non trovato')) {
@@ -427,6 +453,7 @@ export default function App() {
         }, 1000);
       }
 
+      // Salvataggio tempo
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
@@ -576,10 +603,11 @@ export default function App() {
               {featured && !loading && (
                 <View style={styles.hero}>
                   <Image source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer ? 0 : 1 }]} />
+                  
                   {trailerKey && showTrailer && (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      {/* CAVALLO DI TROIA: URL DIRETTO, NESSUN EMBED, BYPASS ERRORE 152/153 */}
                       <WebView
+                        ref={trailerWebViewRef}
                         style={{ flex: 1, backgroundColor: 'black' }}
                         javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
                         source={{ uri: `https://m.youtube.com/watch?v=${trailerKey}` }}
@@ -588,6 +616,7 @@ export default function App() {
                       />
                     </View>
                   )}
+
                   <View style={[styles.heroOverlay, { backgroundColor: showTrailer ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.6)' }]}>
                     <Text style={styles.heroTitle}>{featured.title || featured.name}</Text>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
@@ -598,6 +627,13 @@ export default function App() {
                         <Text style={styles.heroAddBtnText}>{myList.find(x => x.id === featured.id) ? '✓' : '+'}</Text>
                       </TouchableOpacity>
                     </View>
+                    
+                    {showTrailer && (
+                      <TouchableOpacity style={styles.muteBtn} onPress={toggleTrailerAudio}>
+                        <Text style={{fontSize: 16}}>{isTrailerMuted ? '🔇' : '🔊'}</Text>
+                      </TouchableOpacity>
+                    )}
+
                   </View>
                 </View>
               )}
@@ -737,6 +773,7 @@ const styles = StyleSheet.create({
   playBtnText: { color: 'black', fontWeight: 'bold', fontSize: 16 },
   heroAddBtn: { backgroundColor: 'rgba(50,50,50,0.8)', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 5, justifyContent: 'center' },
   heroAddBtnText: { color: 'white', fontWeight: 'bold', fontSize: 18 },
+  muteBtn: { position: 'absolute', bottom: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.6)', width: 45, height: 45, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   rowTitle: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 15, marginBottom: 15 },
   card: { marginLeft: 15, width: 130 },
   cardImg: { width: 130, height: 195, borderRadius: 10, backgroundColor: '#111' },
