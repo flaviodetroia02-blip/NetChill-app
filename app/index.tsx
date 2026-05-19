@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
-import { useVideoPlayer } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, BackHandler, Image, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -10,10 +9,9 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// IL TUO NUMERO DI VERSIONE ATTUALE (AGGIORNATO ALLA 8)
-const APP_VERSION_CODE = 8; 
+// VERSIONE 12 - L'ABITO SU MISURA PER CB01
+const APP_VERSION_CODE = 12; 
 
-// I TUOI TELECOMANDI A DISTANZA SU GITHUB
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
 
@@ -42,10 +40,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   
   const [targetUrl, setTargetUrl] = useState('');
-  const [videoUrl, setVideoUrl] = useState(null);
   const [currentMovie, setCurrentMovie] = useState(null); 
 
-  // IMPOSTAZIONE DI BASE
   const [streamingDomain, setStreamingDomain] = useState('https://cb01.tv');
 
   const [profiles, setProfiles] = useState([]);
@@ -75,29 +71,21 @@ export default function App() {
           setRecommendations([]);
           return;
         }
-
         const genreCounts = {};
         allItems.forEach(item => {
           if (item.genre_ids && Array.isArray(item.genre_ids)) {
-            item.genre_ids.forEach(id => {
-              genreCounts[id] = (genreCounts[id] || 0) + 1;
-            });
+            item.genre_ids.forEach(id => { genreCounts[id] = (genreCounts[id] || 0) + 1; });
           }
         });
-
         const sortedGenres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
         if (sortedGenres.length === 0) return;
         const topGenre = sortedGenres[0];
-
         const res = await fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc&with_genres=${topGenre}`).then(r => r.json());
-
         const knownIds = new Set(allItems.map(i => i.id));
         const freshMovies = res.results.filter(m => !knownIds.has(m.id)).slice(0, 10);
-
         setRecommendations(freshMovies);
-      } catch(e) { console.log("Errore algoritmo", e); }
+      } catch(e) {}
     };
-
     buildRecommendations();
   }, [historyIds, listIds, activeProfile]);
 
@@ -147,14 +135,8 @@ export default function App() {
         res = await fetch(`https://api.themoviedb.org/3/${type}/${id}/videos?api_key=${TMDB_API_KEY}&language=en-US`).then(r => r.json());
       }
       const trailer = res.results?.find(v => v.type === 'Trailer' && v.site === 'YouTube') || res.results?.find(v => v.site === 'YouTube') || res.results?.[0];
-      if (trailer) {
-        setTrailerKey(trailer.key);
-      } else {
-        setTrailerKey(null);
-      }
-    } catch (e) {
-      setTrailerKey(null);
-    }
+      if (trailer) { setTrailerKey(trailer.key); } else { setTrailerKey(null); }
+    } catch (e) { setTrailerKey(null); }
   };
 
   const fetchDomainFromGitHub = async () => {
@@ -174,30 +156,23 @@ export default function App() {
   const loadInitialConfig = async () => {
     try {
       const savedProfiles = await AsyncStorage.getItem('@profiles');
-      if (savedProfiles) {
-        setProfiles(JSON.parse(savedProfiles));
-      } else {
+      if (savedProfiles) { setProfiles(JSON.parse(savedProfiles)); } else {
         const defaultProfile = [{ id: '1', name: 'Ospite', avatar: '😎' }];
         setProfiles(defaultProfile);
         await AsyncStorage.setItem('@profiles', JSON.stringify(defaultProfile));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {}
   };
 
-  useEffect(() => {
-    if (activeProfile) loadUserData(activeProfile.id);
-  }, [activeProfile]);
+  useEffect(() => { if (activeProfile) loadUserData(activeProfile.id); }, [activeProfile]);
 
   const loadUserData = async (profileId) => {
     try {
       const savedHistory = await AsyncStorage.getItem(`@continue_watching_${profileId}`);
-      if (savedHistory) setContinueWatching(JSON.parse(savedHistory));
-      else setContinueWatching([]); 
-
+      if (savedHistory) setContinueWatching(JSON.parse(savedHistory)); else setContinueWatching([]); 
       const savedList = await AsyncStorage.getItem(`@my_list_${profileId}`);
-      if (savedList) setMyList(JSON.parse(savedList));
-      else setMyList([]);
-    } catch (e) { console.error(e); }
+      if (savedList) setMyList(JSON.parse(savedList)); else setMyList([]);
+    } catch (e) {}
   };
 
   const createProfile = async () => {
@@ -223,9 +198,7 @@ export default function App() {
     try {
       let currentList = [...myList];
       const exists = currentList.find(x => x.id === item.id);
-      if (exists) {
-        currentList = currentList.filter(x => x.id !== item.id);
-      } else {
+      if (exists) { currentList = currentList.filter(x => x.id !== item.id); } else {
         currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path, genre_ids: item.genre_ids });
       }
       setMyList(currentList);
@@ -233,15 +206,16 @@ export default function App() {
     } catch (e) {}
   };
 
-  const startPlaying = async (item) => {
+  const startPlaying = async (item, isResume = false) => {
     if (!activeProfile) return;
     try {
       let currentHistory = [...continueWatching];
       const existing = currentHistory.find(x => x.id === item.id);
-      
       const progressToSave = existing ? existing.progress : 0;
       const durationToSave = existing ? existing.duration : 0;
-      const lastUrlToSave = existing ? existing.lastUrl : null; 
+      
+      // Usa l'ultimo link salvato SOLO se clicchi dalla cronologia
+      const lastUrlToSave = (existing && isResume) ? existing.lastUrl : null; 
       const episodeInfoToSave = existing ? existing.episodeInfo : null;
 
       currentHistory = currentHistory.filter(x => x.id !== item.id);
@@ -256,17 +230,11 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      // --- IL CECCHINO DEI TITOLI ---
-      // 1. Puliamo il titolo dai due punti e trattini
+      // IL RITORNO DEL CECCHINO (Titolo Pulito + Anno)
       const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
-      
-      // 2. Estraiamo l'anno esatto di uscita dal database grafico
       const releaseYear = item.release_date ? item.release_date.split('-')[0] : (item.first_air_date ? item.first_air_date.split('-')[0] : '');
-      
-      // 3. Uniamo Titolo e Anno (es: "The Batman 2022")
       const exactSearch = releaseYear ? `${cleanTitle} ${releaseYear}` : cleanTitle;
 
-      // 4. Inviamo la ricerca perfetta a Cineblog
       const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(exactSearch)}`;
       setTargetUrl(finalUrl);
     } catch (e) {}
@@ -288,9 +256,7 @@ export default function App() {
 
       const firstItem = trending.results[0];
       setFeatured(firstItem);
-      if (firstItem) {
-        fetchTrailer(firstItem.id, firstItem.media_type);
-      }
+      if (firstItem) { fetchTrailer(firstItem.id, firstItem.media_type); }
       setSections({ trending: trending.results.slice(1, 15), movies: movies.results, series: series.results, searchResults: [] });
       setLoading(false);
     } catch (e) { setLoading(false); }
@@ -323,80 +289,92 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // IL NUOVO SPARTANO AUTOCLICKER E CLEANER PER CB01
+  // VERSIONE 12 - JS CUCITO SU MISURA PER CB01 SULLA BASE DEI TUOI DATI
   const dynamicJS = `
     (function() {
-      window.open = function() { return null; }; // Uccide i popup istantaneamente
-      
+      window.open = function() { return null; }; // Uccide i popup
+
+      // SCUDO ANTI-PUBBLICITÀ SUI CLICK (Missione 4)
       document.addEventListener('click', function(e) {
         let target = e.target.closest('a');
-        if (target && target.target === '_blank') target.target = '_self'; 
+        if (target) {
+          // Se un tasto falso prova a portarti su scommesse o download finti, lo annulla
+          if (target.href && !target.href.includes(window.location.hostname) && !target.href.startsWith('/')) {
+            e.preventDefault(); e.stopPropagation(); return false;
+          }
+          if (target.target === '_blank') target.target = '_self';
+        }
       }, true);
 
-      // SE SIAMO NELLA PAGINA DI RICERCA (?s=)
+      // --- LOGICA DELLA PAGINA DI RICERCA ---
       if (window.location.search.includes('?s=')) {
-        document.body.style.display = 'none'; // Nascondi tutto lo schermo (diventa nero)
+        document.body.style.opacity = '0'; // Schermo nero temporaneo
         
-        // Aspetta mezzo secondo per far caricare la pagina e clicca il primo film!
         setTimeout(() => {
-          const firstMovie = document.querySelector('.card a, article a, h2 a, .post-title a');
-          if (firstMovie && firstMovie.href) {
-            window.location.href = firstMovie.href; // Ti porta dentro il film da solo
+          // CONTROLLO ERRORE (Missione 2: La tua frase esatta)
+          if (document.body.innerText.includes('Nessun Film risponde ai criteri di ricerca impostati')) {
+            document.body.innerHTML = '<div style="display:flex; height:100vh; width:100vw; justify-content:center; alignItems:center; background:black;"><h2 style="color:white; font-family:sans-serif;">Film non trovato nel server.<br><br>Torna indietro 😔</h2></div>';
+            document.body.style.opacity = '1';
           } else {
-            // Se non trova niente, ti fa vedere un messaggio di errore al centro
-            document.body.style.display = 'flex';
-            document.body.style.justifyContent = 'center';
-            document.body.style.alignItems = 'center';
-            document.body.style.height = '100vh';
-            document.body.innerHTML = '<h2 style="color:white; font-family:sans-serif; text-align:center;">Film non trovato nel server<br><br>Torna indietro 😔</h2>';
+            // AUTO-CLICKER CHIRURGICO (Missione 1: Il blocco esatto che hai trovato)
+            const trueMovieLink = document.querySelector('article.short.block-list h3.story-heading a');
+            if (trueMovieLink && trueMovieLink.href) {
+              window.location.href = trueMovieLink.href; // Clicca solo il film corretto!
+            } else {
+              document.body.style.opacity = '1'; // Fallback d'emergenza
+            }
           }
-        }, 500);
+        }, 1000);
       } 
-      // SE SIAMO NELLA PAGINA DEL FILM (Fase di pulizia e player)
+      // --- LOGICA DELLA PAGINA DEL PLAYER ---
       else {
         setInterval(() => {
-          const junk = ['header', 'footer', '#sidebar', '.sidebar', '.widget-area', '#comments', '.menu', '.logo', '.ads', '.overlay', 'iframe[src*="ad"]'];
+          // Distruttore di overlay invisibili anti-click
+          document.querySelectorAll('div').forEach(el => {
+            const style = window.getComputedStyle(el);
+            if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 90) {
+              if (!el.contains(document.querySelector('iframe'))) el.remove();
+            }
+          });
+
+          // Nascondi header, footer, menu, commenti
+          const junk = ['header', 'footer', '#sidebar', '.sidebar', '.widget-area', '#comments', '.menu', '.logo', '.ads'];
           junk.forEach(s => document.querySelectorAll(s).forEach(el => el.style.display = 'none'));
 
-          const main = document.querySelectorAll('main, #content, .content, article');
-          main.forEach(el => {
+          // Allarga tutto
+          document.querySelectorAll('main, #content, .content, article').forEach(el => {
             el.style.width = '100%'; el.style.padding = '0'; el.style.margin = '0';
           });
           document.body.style.backgroundColor = '#000';
           
-          // Prova a fare un piccolo scroll verso il video in automatico
-          const iframe = document.querySelector('iframe');
-          if (iframe && !window.hasScrolledToVideo) {
-             iframe.scrollIntoView({behavior: 'smooth', block: 'center'});
+          // Scroll mirato all'iframe esatto che hai trovato (Missione 3)
+          const playerFrame = document.querySelector('iframe#iFrameResizer0') || document.querySelector('iframe');
+          if (playerFrame && !window.hasScrolledToVideo) {
+             playerFrame.scrollIntoView({behavior: 'smooth', block: 'center'});
              window.hasScrolledToVideo = true;
           }
-        }, 800);
+        }, 500);
       }
 
+      // --- SALVATAGGIO MINUTI (Invariato) ---
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
-      let currentUrl = location.href;
-      let hasSeeked = (initialSavedTime < 5);
-      let lastSaved = 0;
+      let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
       function attachToVideo(v) {
         if (!v || v.dataset.hooked) return;
         v.dataset.hooked = "true"; 
-
         const trySeek = () => {
           if (!hasSeeked && v.readyState >= 1) {
             if (Math.abs(v.currentTime - initialSavedTime) > 3) { v.currentTime = initialSavedTime; } 
             else { hasSeeked = true; }
           }
         };
-
         v.addEventListener('loadedmetadata', trySeek);
         v.addEventListener('playing', trySeek);
-
         const seekInt = setInterval(() => {
           if (hasSeeked) { clearInterval(seekInt); return; }
           trySeek();
         }, 500);
-
         v.addEventListener('timeupdate', () => {
           if (location.href !== currentUrl) {
             currentUrl = location.href; hasSeeked = true; initialSavedTime = 0;
@@ -406,11 +384,7 @@ export default function App() {
               lastSaved = v.currentTime;
               try {
                 window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                  type: 'TIME_UPDATE', 
-                  time: v.currentTime, 
-                  duration: v.duration || 0, 
-                  url: location.href,
-                  pageTitle: document.title
+                  type: 'TIME_UPDATE', time: v.currentTime, duration: v.duration || 0, url: location.href, pageTitle: document.title
                 }));
               } catch(e) {}
             }
@@ -492,11 +466,9 @@ export default function App() {
               <Text style={[styles.logo, { fontSize: 32, marginBottom: 10 }]}>NETCHILL</Text>
               <Text style={styles.updateTitle}>Nuovo Aggiornamento</Text>
               <Text style={styles.updateDesc}>{updateData.message || "È disponibile una nuova versione. Aggiorna ora."}</Text>
-              
               <TouchableOpacity style={styles.updateBtn} onPress={() => Linking.openURL(updateData.url)} hasTVPreferredFocus={true}>
                 <Text style={styles.updateBtnText}>SCARICA ORA</Text>
               </TouchableOpacity>
-              
               <TouchableOpacity style={{ marginTop: 20 }} onPress={() => setUpdateData(null)}>
                 <Text style={{ color: '#666', fontWeight: 'bold' }}>Ricordamelo più tardi</Text>
               </TouchableOpacity>
@@ -509,7 +481,6 @@ export default function App() {
         <TouchableOpacity onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}} hasTVPreferredFocus={view !== 'search'}>
           <Text style={styles.logo}>NETCHILL</Text>
         </TouchableOpacity>
-        
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TextInput style={[styles.searchBar, { width: 150, marginRight: 15 }]} placeholder="Cerca..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} onSubmitEditing={handleSearch} />
           <TouchableOpacity onPress={() => setActiveProfile(null)} style={{ width: 35, height: 35, borderRadius: 5, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }}>
@@ -538,17 +509,10 @@ export default function App() {
                 <View style={styles.hero}>
                   {trailerKey ? (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      {/* FIX YOUTUBE DEFINITIVO */}
                       <WebView
                         style={{ flex: 1, backgroundColor: 'black' }}
-                        javaScriptEnabled={true}
-                        domStorageEnabled={true}
-                        allowsInlineMediaPlayback={true}
-                        mediaPlaybackRequiresUserAction={false}
-                        source={{ 
-                          html: `<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="margin:0;padding:0;background-color:#000;"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&playsinline=1&rel=0" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe></body></html>`,
-                          baseUrl: 'https://www.youtube.com' 
-                        }}
+                        javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
+                        source={{ uri: `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&playsinline=1&rel=0` }}
                       />
                     </View>
                   ) : (
@@ -570,13 +534,11 @@ export default function App() {
               {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 50}} /> : (
                 <View style={styles.content}>
                   {continueWatching.length > 0 && !selectedGenre && (
-                    <Row title={`Continua a guardare, ${activeProfile.name}`} data={continueWatching} onPlay={startPlaying} isHistory myList={myList} onToggleList={toggleMyList} />
+                    <Row title={`Continua a guardare, ${activeProfile.name}`} data={continueWatching} onPlay={(i) => startPlaying(i, true)} isHistory myList={myList} onToggleList={toggleMyList} />
                   )}
-                  
                   {recommendations.length > 0 && !selectedGenre && (
                     <Row title={`Scelti per te, ${activeProfile.name}`} data={recommendations} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   )}
-
                   {myList.length > 0 && !selectedGenre && (
                     <Row title="La mia Lista" data={myList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   )}
@@ -613,14 +575,8 @@ export default function App() {
             ref={webViewRef}
             source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
             userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            injectedJavaScript={dynamicJS}
-            injectedJavaScriptForMainFrameOnly={false} 
-            style={{ flex: 1, backgroundColor: '#000' }}
-            allowsInlineMediaPlayback={true}
-            allowsFullscreenVideo={true}
-            mediaPlaybackRequiresUserAction={false}
+            sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} injectedJavaScript={dynamicJS} injectedJavaScriptForMainFrameOnly={false} 
+            style={{ flex: 1, backgroundColor: '#000' }} allowsInlineMediaPlayback={true} allowsFullscreenVideo={true} mediaPlaybackRequiresUserAction={false}
             onMessage={async (e) => {
               try {
                 const msg = JSON.parse(e.nativeEvent.data);
@@ -628,20 +584,13 @@ export default function App() {
                   let currentList = [...historyRef.current];
                   const idx = currentList.findIndex(x => x.id === currentMovieRef.current.id);
                   if (idx > -1) {
-                    currentList[idx].progress = msg.time;
-                    currentList[idx].duration = msg.duration;
-                    
+                    currentList[idx].progress = msg.time; currentList[idx].duration = msg.duration;
                     if (msg.pageTitle) {
                       const matchStagione = msg.pageTitle.match(/Stagione\s*(\d+)/i);
                       const matchEpisodio = msg.pageTitle.match(/Episodio\s*(\d+)/i);
-                      if (matchStagione && matchEpisodio) {
-                        currentList[idx].episodeInfo = `S${matchStagione[1]} E${matchEpisodio[1]}`;
-                      }
+                      if (matchStagione && matchEpisodio) { currentList[idx].episodeInfo = `S${matchStagione[1]} E${matchEpisodio[1]}`; }
                     }
-
-                    if (streamingDomain && msg.url && msg.url.includes(streamingDomain.split('//')[1])) {
-                      currentList[idx].lastUrl = msg.url;
-                    }
+                    if (streamingDomain && msg.url && msg.url.includes(streamingDomain.split('//')[1])) { currentList[idx].lastUrl = msg.url; }
                     setContinueWatching(currentList);
                     await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(currentList));
                   }
@@ -662,9 +611,7 @@ const MovieCard = ({ item, onPlay, isHistory, myList = [], onToggleList }) => {
 
   return (
     <TouchableOpacity 
-      activeOpacity={0.8}
-      onFocus={() => setIsFocused(true)}
-      onBlur={() => setIsFocused(false)}
+      activeOpacity={0.8} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)}
       style={[styles.card, isFocused && { transform: [{ scale: Platform.isTV ? 1.05 : 1 }], borderColor: 'white', borderWidth: Platform.isTV ? 2 : 0, borderRadius: 12 }]} 
       onPress={() => onPlay(item)}
     >
@@ -673,18 +620,8 @@ const MovieCard = ({ item, onPlay, isHistory, myList = [], onToggleList }) => {
         <TouchableOpacity style={styles.overlayAddBtn} onPress={() => onToggleList(item)}>
           <Text style={{color: 'white', fontWeight: 'bold'}}>{inList ? '✓' : '+'}</Text>
         </TouchableOpacity>
-        
-        {item.episodeInfo && (
-          <View style={styles.episodeBadge}>
-            <Text style={styles.episodeBadgeText}>{item.episodeInfo}</Text>
-          </View>
-        )}
-
-        {isHistory && (
-          <View style={styles.progressContainer}>
-            <View style={[styles.progressBar, { width: `${progressPercent}%` }]} />
-          </View>
-        )}
+        {item.episodeInfo && ( <View style={styles.episodeBadge}><Text style={styles.episodeBadgeText}>{item.episodeInfo}</Text></View> )}
+        {isHistory && ( <View style={styles.progressContainer}><View style={[styles.progressBar, { width: `${progressPercent}%` }]} /></View> )}
       </View>
       <Text style={styles.cardTitle} numberOfLines={1}>{item.title || item.name}</Text>
     </TouchableOpacity>
@@ -695,9 +632,7 @@ const Row = ({ title, data, onPlay, isHistory, myList = [], onToggleList }) => (
   <View style={{marginBottom: 25}}>
     <Text style={styles.rowTitle}>{title}</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      {data.map(item => (
-        <MovieCard key={item.id} item={item} onPlay={onPlay} isHistory={isHistory} myList={myList} onToggleList={onToggleList} />
-      ))}
+      {data.map(item => ( <MovieCard key={item.id} item={item} onPlay={onPlay} isHistory={isHistory} myList={myList} onToggleList={onToggleList} /> ))}
     </ScrollView>
   </View>
 );
@@ -732,14 +667,12 @@ const styles = StyleSheet.create({
   browserBar: { backgroundColor: '#111', padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   barLink: { color: '#E50914', fontWeight: 'bold', fontSize: 12 },
   barTitle: { color: '#444', fontSize: 10, fontWeight: 'bold' },
-  
   updateModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   updateBox: { backgroundColor: '#141414', padding: 40, borderRadius: 15, alignItems: 'center', width: '100%', maxWidth: 450, borderWidth: 1, borderColor: '#333' },
   updateTitle: { color: 'white', fontSize: 24, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
   updateDesc: { color: '#999', fontSize: 16, textAlign: 'center', marginBottom: 30, lineHeight: 22 },
   updateBtn: { backgroundColor: '#E50914', paddingVertical: 15, paddingHorizontal: 30, borderRadius: 5, width: '100%', alignItems: 'center' },
   updateBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 },
-
   episodeBadge: { position: 'absolute', top: 5, left: 5, backgroundColor: '#E50914', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, zIndex: 10 },
   episodeBadgeText: { color: 'white', fontSize: 9, fontWeight: 'bold' }
 });
