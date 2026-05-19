@@ -9,8 +9,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// VERSIONE 12 - L'ABITO SU MISURA PER CB01 (COMPLETO)
-const APP_VERSION_CODE = 12; 
+// VERSIONE 13 - MOTORE MANUALE, ZERO AUTO-CLICKER
+const APP_VERSION_CODE = 13; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -209,7 +209,6 @@ export default function App() {
       const existing = currentHistory.find(x => x.id === item.id);
       const progressToSave = existing ? existing.progress : 0;
       const durationToSave = existing ? existing.duration : 0;
-      
       const lastUrlToSave = (existing && isResume) ? existing.lastUrl : null; 
       const episodeInfoToSave = existing ? existing.episodeInfo : null;
 
@@ -225,11 +224,9 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
+      // RICERCA PURA E SEMPLICE (Niente anni, niente precisione chirurgica che blocca il sito)
       const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
-      const releaseYear = item.release_date ? item.release_date.split('-')[0] : (item.first_air_date ? item.first_air_date.split('-')[0] : '');
-      const exactSearch = releaseYear ? `${cleanTitle} ${releaseYear}` : cleanTitle;
-
-      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(exactSearch)}`;
+      const finalUrl = lastUrlToSave ? lastUrlToSave : `${streamingDomain}/?s=${encodeURIComponent(cleanTitle)}`;
       setTargetUrl(finalUrl);
     } catch (e) {}
   };
@@ -283,10 +280,13 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
+  // VERSIONE 13 - IL CODICE PULITO. NIENTE PIU' AUTO-CLICK.
   const dynamicJS = `
     (function() {
-      window.open = function() { return null; };
+      // 1. UCCIDE I POP-UP ISTANTANEAMENTE
+      window.open = function() { return null; }; 
 
+      // 2. SCUDO ANTI-REDIRECT (Evita che ti portino su siti esterni di scommesse)
       document.addEventListener('click', function(e) {
         let target = e.target.closest('a');
         if (target) {
@@ -297,22 +297,27 @@ export default function App() {
         }
       }, true);
 
+      // 3. SPAZZINO CONTINUO (Pulisce solo la grafica, non clicca nulla)
       setInterval(() => {
+        // Distruttore di overlay invisibili
         document.querySelectorAll('div').forEach(el => {
           const style = window.getComputedStyle(el);
-          if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 90) {
+          if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 50) {
             if (!el.contains(document.querySelector('iframe'))) el.remove();
           }
         });
 
+        // Nascondi scritte inutili e barre laterali
         const junk = ['header', 'footer', '#sidebar', '.sidebar', '.widget-area', '#comments', '.menu', '.logo', '.ads'];
         junk.forEach(s => document.querySelectorAll(s).forEach(el => el.style.display = 'none'));
 
+        // Allarga il contenuto
         document.querySelectorAll('main, #content, .content, article').forEach(el => {
           el.style.width = '100%'; el.style.padding = '0'; el.style.margin = '0';
         });
         document.body.style.backgroundColor = '#000';
         
+        // Scrolla verso il player SE siamo dentro un film
         if (!window.location.search.includes('?s=')) {
           const playerFrame = document.querySelector('iframe#iFrameResizer0') || document.querySelector('iframe');
           if (playerFrame && !window.hasScrolledToVideo) {
@@ -322,23 +327,7 @@ export default function App() {
         }
       }, 500);
 
-      if (window.location.search.includes('?s=')) {
-        document.body.style.opacity = '0';
-        setTimeout(() => {
-          if (document.body.innerText.includes('Nessun Film risponde ai criteri di ricerca impostati')) {
-            document.body.innerHTML = '<div style="display:flex; height:100vh; width:100vw; justify-content:center; align-items:center; background:black;"><h2 style="color:white; font-family:sans-serif; text-align:center;">Film non trovato nel server.<br><br>Torna indietro 😔</h2></div>';
-            document.body.style.opacity = '1';
-          } else {
-            const trueMovieLink = document.querySelector('article.short.block-list h3.story-heading a');
-            if (trueMovieLink && trueMovieLink.href) {
-              window.location.href = trueMovieLink.href;
-            } else {
-              document.body.style.opacity = '1';
-            }
-          }
-        }, 1000);
-      }
-
+      // 4. SALVATAGGIO DEI MINUTI GUARDATI (Invariato)
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
