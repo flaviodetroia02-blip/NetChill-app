@@ -9,8 +9,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// VERSIONE 22 - CENSURA TOTALE DI CB01 E PULIZIA ESTETICA
-const APP_VERSION_CODE = 22; 
+// VERSIONE 23 - FIX SIPARIO NERO (Fail-safe) E PULIZIA ESTREMA YOUTUBE
+const APP_VERSION_CODE = 23; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -280,7 +280,13 @@ export default function App() {
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
+      
+      // 🔴 FIX SIPARIO NERO: Attiva il caricamento, ma imposta un limite massimo di 3 secondi!
       setIsWebViewLoading(true);
+      setTimeout(() => {
+        setIsWebViewLoading(false);
+      }, 3000); 
+
     } catch (e) {}
   };
 
@@ -333,12 +339,15 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // SCRIPT YOUTUBE
+  // 🔴 VERSIONE 23: CENSURA ESTREMA INTERFACCIA YOUTUBE 🔴
   const ytInject = `
     (function() {
       window.isAppMuted = true;
       const css = document.createElement('style');
-      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, ytm-item-section-renderer, .page-container, .related-items-container, ytm-promoted-sparkles-web-renderer, .ad-showing, ytm-consent-bump-v2-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 999999 !important; background: #000 !important; }';
+      
+      // Nascondiamo violentemente TUTTI gli elementi di interfaccia, inclusi overlay e sfumature
+      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, ytm-item-section-renderer, .page-container, .related-items-container, ytm-promoted-sparkles-web-renderer, .ad-showing, ytm-consent-bump-v2-renderer, ytm-player-overlay, .ytp-chrome-top, .ytp-chrome-bottom, .ytp-watermark, .ytp-gradient-top, .ytp-gradient-bottom { display: none !important; opacity: 0 !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; }';
+      
       document.head.appendChild(css);
       
       let initDone = false;
@@ -369,14 +378,13 @@ export default function App() {
     true;
   `;
 
-  // 🔴 VERSIONE 22: CENSURA DI OGNI RIFERIMENTO A CB01 E RICERCA 🔴
+  // 🔴 VERSIONE 23: SPAZZINO CB01 OTTIMIZZATO (Più sicuro) 🔴
   const dynamicJS = `
     (function() {
       const tvStyle = document.createElement('style');
       tvStyle.innerHTML = \`
         html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
         
-        /* Nasconde header, menu e moduli di ricerca nativi (form) */
         header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb, form, center, .speedbar, .berrors { 
           display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
         }
@@ -416,25 +424,22 @@ export default function App() {
           }
         });
 
-        // 🔴 MIETITORE DI PAROLE CHIAVE (Censura CB01, testi SEO e finti download) 🔴
-        document.querySelectorAll('h1, h2, h3, h4, p, div, span, b, strong').forEach(el => {
-          if (el.children.length < 3) { 
-            const txt = (el.textContent || '').toLowerCase();
-            if (
-              txt.includes('cliccaci per') || 
-              txt.includes('scarica download') || 
-              txt.includes('hd/4k gratis') ||
-              txt.includes('l\\'indirizzo ufficiale') ||
-              txt.includes('cerca su cb01') ||
-              txt.includes('film streaming e download') ||
-              txt.includes('risultati di ricerca')
-            ) {
-              el.style.display = 'none';
-            }
+        // Censura parole chiave: colpiamo solo i tag di testo piccoli, per non rischiare di cancellare l'intera pagina!
+        document.querySelectorAll('a, p, span, b, strong').forEach(el => {
+          const txt = (el.textContent || '').toLowerCase();
+          if (
+            txt.includes('cliccaci per') || 
+            txt.includes('scarica download') || 
+            txt.includes('hd/4k gratis') ||
+            txt.includes('l\\'indirizzo ufficiale') ||
+            txt.includes('cerca su cb01') ||
+            txt.includes('film streaming e download') ||
+            txt.includes('risultati di ricerca')
+          ) {
+            el.style.display = 'none';
           }
         });
         
-        // Scroll player
         if (!window.location.href.includes('do=search') && !window.location.href.includes('/search/')) {
           const playerFrame = document.querySelector('iframe#iFrameResizer0') || document.querySelector('iframe');
           if (playerFrame && !window.hasScrolledToVideo) {
@@ -444,7 +449,7 @@ export default function App() {
         }
       }, 500);
 
-      // Errore custom in caso di ricerca vuota
+      // Errore custom
       if (window.location.href.includes('do=search') || window.location.href.includes('/search/')) {
         setTimeout(() => {
           if (document.body.innerText.includes('Nessun Film risponde ai criteri di ricerca impostati') || document.body.innerText.includes('non trovato')) {
@@ -453,7 +458,6 @@ export default function App() {
         }, 1000);
       }
 
-      // Salvataggio tempo
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
