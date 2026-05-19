@@ -9,8 +9,8 @@ const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 
-// VERSIONE 14 - RICERCA NATIVA DLE PER CB01
-const APP_VERSION_CODE = 14; 
+// VERSIONE 17 - EFFETTO PRIME VIDEO (Trailer Ritardato + Sensore Scroll + Bypass 153)
+const APP_VERSION_CODE = 17; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -41,6 +41,12 @@ export default function App() {
   
   const [targetUrl, setTargetUrl] = useState('');
   const [currentMovie, setCurrentMovie] = useState(null); 
+  const [isWebViewLoading, setIsWebViewLoading] = useState(false);
+
+  // --- STATI PER L'EFFETTO PRIME VIDEO ---
+  const [showTrailer, setShowTrailer] = useState(false);
+  const scrollY = useRef(0);
+  const trailerTimeout = useRef(null);
 
   const [streamingDomain, setStreamingDomain] = useState('https://cb01.tv');
 
@@ -61,6 +67,39 @@ export default function App() {
 
   const historyIds = continueWatching.map(x => x.id).join(',');
   const listIds = myList.map(x => x.id).join(',');
+
+  // --- LOGICA TIMER TRAILER PRIME VIDEO ---
+  const startTrailerTimer = () => {
+    clearTimeout(trailerTimeout.current);
+    trailerTimeout.current = setTimeout(() => {
+      // Se dopo 3 secondi l'utente è ancora in cima alla pagina, fai partire il video
+      if (scrollY.current < 150) {
+        setShowTrailer(true);
+      }
+    }, 3000); 
+  };
+
+  useEffect(() => {
+    if (featured && trailerKey) {
+      setShowTrailer(false);
+      startTrailerTimer();
+    }
+    return () => clearTimeout(trailerTimeout.current);
+  }, [featured, trailerKey]);
+
+  const handleScroll = (event) => {
+    const y = event.nativeEvent.contentOffset.y;
+    scrollY.current = y;
+
+    if (y > 150 && showTrailer) {
+      // Spegne il trailer appena scendi giù
+      setShowTrailer(false);
+    } else if (y <= 150 && !showTrailer && trailerKey) {
+      // Riavvia il timer se torni su
+      startTrailerTimer();
+    }
+  };
+  // ----------------------------------------
 
   useEffect(() => {
     const buildRecommendations = async () => {
@@ -225,12 +264,11 @@ export default function App() {
       setCurrentMovie(newItem);
 
       const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
-      
-      // IL CUORE DELLA VERSIONE 14: Ricerca nativa per DataLife Engine (CB01)
       const searchUrl = `${streamingDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanTitle)}`;
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
+      setIsWebViewLoading(true);
     } catch (e) {}
   };
 
@@ -285,10 +323,28 @@ export default function App() {
 
   const dynamicJS = `
     (function() {
-      // 1. UCCIDE I POP-UP ISTANTANEAMENTE
+      const tvStyle = document.createElement('style');
+      tvStyle.innerHTML = \`
+        html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
+        header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb { 
+          display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
+        }
+        #dle-content, main, .content, article { 
+          width: 100vw !important; max-width: 100% !important; padding: 20px !important; margin: 0 auto !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; align-items: center !important;
+        }
+        .short { margin-bottom: 40px !important; text-align: center !important; max-width: 600px !important; }
+        .short img { transform: scale(1.1) !important; border-radius: 12px !important; margin-bottom: 15px !important; }
+        .story-heading { font-size: 26px !important; margin-top: 20px !important; font-family: sans-serif !important; }
+        .story-heading a { color: #ffffff !important; text-decoration: none !important; }
+        .story-heading a:focus, .story-heading a:active { color: #E50914 !important; }
+        iframe#iFrameResizer0, iframe, .video-container {
+          width: 95vw !important; height: 80vh !important; border-radius: 12px !important; border: 2px solid #222 !important; margin-top: 15px !important; box-shadow: 0px 10px 30px rgba(0,0,0,0.8) !important;
+        }
+      \`;
+      document.documentElement.appendChild(tvStyle); 
+
       window.open = function() { return null; }; 
 
-      // 2. SCUDO ANTI-REDIRECT
       document.addEventListener('click', function(e) {
         let target = e.target.closest('a');
         if (target) {
@@ -299,27 +355,14 @@ export default function App() {
         }
       }, true);
 
-      // 3. SPAZZINO CONTINUO POTENZIATO PER MOBILE E DLE
       setInterval(() => {
-        // Distruttore di overlay invisibili
         document.querySelectorAll('div').forEach(el => {
           const style = window.getComputedStyle(el);
           if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 50) {
             if (!el.contains(document.querySelector('iframe')) && !el.contains(document.querySelector('video'))) el.remove();
           }
         });
-
-        // Nascondi scritte, intestazioni enormi e pubblicità (ho aggiunto .header e altri container visti nel video)
-        const junk = ['header', 'footer', '#sidebar', '.sidebar', '.widget-area', '#comments', '.menu', '.logo', '.ads', '.top-header', '.head', '#header', '.mobile-header'];
-        junk.forEach(s => document.querySelectorAll(s).forEach(el => el.style.display = 'none'));
-
-        // Allarga il contenuto
-        document.querySelectorAll('main, #content, .content, article, #dle-content').forEach(el => {
-          el.style.width = '100%'; el.style.padding = '0'; el.style.margin = '0';
-        });
-        document.body.style.backgroundColor = '#000';
         
-        // Scrolla verso il player SE siamo dentro un film
         if (!window.location.href.includes('do=search') && !window.location.href.includes('/search/')) {
           const playerFrame = document.querySelector('iframe#iFrameResizer0') || document.querySelector('iframe');
           if (playerFrame && !window.hasScrolledToVideo) {
@@ -329,21 +372,14 @@ export default function App() {
         }
       }, 500);
 
-      // 4. LOGICA DELLA PAGINA DI RICERCA
       if (window.location.href.includes('do=search') || window.location.href.includes('/search/')) {
-        document.body.style.opacity = '0';
         setTimeout(() => {
           if (document.body.innerText.includes('Nessun Film risponde ai criteri di ricerca impostati') || document.body.innerText.includes('non trovato')) {
-            document.body.innerHTML = '<div style="display:flex; height:100vh; width:100vw; justify-content:center; align-items:center; background:black;"><h2 style="color:white; font-family:sans-serif; text-align:center;">Film non trovato su CB01.<br><br>Torna indietro 😔</h2></div>';
-            document.body.style.opacity = '1';
-          } else {
-            // Niente auto-clicker. Rende solo visibile la pagina per farti scegliere il film.
-            document.body.style.opacity = '1';
+            document.body.innerHTML = '<div style="display:flex; height:100vh; width:100vw; justify-content:center; align-items:center; background:black;"><h2 style="color:white; font-family:sans-serif; text-align:center;">Film non trovato nel server.<br><br>Premi INDIETRO sul telecomando 😔</h2></div>';
           }
         }, 1000);
       }
 
-      // 5. SALVATAGGIO DEI MINUTI GUARDATI
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
@@ -487,23 +523,33 @@ export default function App() {
       )}
 
       {!targetUrl ? (
-        <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false}>
+        // SCROLLVIEW CON SENSORE PER L'EFFETTO PRIME VIDEO
+        <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
           {view === 'home' ? (
             <>
               {featured && !loading && (
                 <View style={styles.hero}>
-                  {trailerKey ? (
+                  
+                  {/* IMMAGINE DI COPERTINA (Scompare se parte il trailer) */}
+                  <Image source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer ? 0 : 1 }]} />
+                  
+                  {/* TRAILER VIDEO (Appare solo dopo 3 secondi se non hai scrollato) */}
+                  {trailerKey && showTrailer && (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                      {/* TRUCCO 153: Usiamo youtube-nocookie e forziamo il Referer per bypassare il blocco copyright */}
                       <WebView
                         style={{ flex: 1, backgroundColor: 'black' }}
                         javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
-                        source={{ uri: `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&playsinline=1&rel=0` }}
+                        source={{ 
+                          uri: `https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&playsinline=1&showinfo=0&rel=0&modestbranding=1`,
+                          headers: { 'Referer': 'https://www.youtube.com/' } 
+                        }}
                       />
                     </View>
-                  ) : (
-                    <Image source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={StyleSheet.absoluteFill} />
                   )}
-                  <View style={styles.heroOverlay}>
+
+                  {/* SFUMATURA E PULSANTI (Leggermente trasparenti se c'è il trailer sotto) */}
+                  <View style={[styles.heroOverlay, { backgroundColor: showTrailer ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.6)' }]}>
                     <Text style={styles.heroTitle}>{featured.title || featured.name}</Text>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
                       <TouchableOpacity style={styles.playBtn} onPress={() => startPlaying(featured)}>
@@ -555,33 +601,46 @@ export default function App() {
               <Text style={styles.barLink}>CHIUDI</Text>
             </TouchableOpacity>
           </View>
-          <WebView 
-            ref={webViewRef}
-            source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
-            userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-            sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} injectedJavaScript={dynamicJS} injectedJavaScriptForMainFrameOnly={false} 
-            style={{ flex: 1, backgroundColor: '#000' }} allowsInlineMediaPlayback={true} allowsFullscreenVideo={true} mediaPlaybackRequiresUserAction={false}
-            onMessage={async (e) => {
-              try {
-                const msg = JSON.parse(e.nativeEvent.data);
-                if (msg.type === 'TIME_UPDATE' && currentMovieRef.current && activeProfile) {
-                  let currentList = [...historyRef.current];
-                  const idx = currentList.findIndex(x => x.id === currentMovieRef.current.id);
-                  if (idx > -1) {
-                    currentList[idx].progress = msg.time; currentList[idx].duration = msg.duration;
-                    if (msg.pageTitle) {
-                      const matchStagione = msg.pageTitle.match(/Stagione\s*(\d+)/i);
-                      const matchEpisodio = msg.pageTitle.match(/Episodio\s*(\d+)/i);
-                      if (matchStagione && matchEpisodio) { currentList[idx].episodeInfo = `S${matchStagione[1]} E${matchEpisodio[1]}`; }
+          
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
+            {isWebViewLoading && (
+              <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
+                <ActivityIndicator size="large" color="#E50914" />
+                <Text style={{ color: '#E50914', marginTop: 15, fontWeight: 'bold', fontSize: 16 }}>Agganciamento Server...</Text>
+              </View>
+            )}
+
+            <WebView 
+              ref={webViewRef}
+              source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
+              userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+              sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} 
+              injectedJavaScript={dynamicJS} injectedJavaScriptForMainFrameOnly={false} 
+              style={{ flex: 1, backgroundColor: '#000' }} allowsInlineMediaPlayback={true} allowsFullscreenVideo={true} mediaPlaybackRequiresUserAction={false}
+              onLoadStart={() => setIsWebViewLoading(true)}
+              onLoadEnd={() => setIsWebViewLoading(false)}
+              onMessage={async (e) => {
+                try {
+                  const msg = JSON.parse(e.nativeEvent.data);
+                  if (msg.type === 'TIME_UPDATE' && currentMovieRef.current && activeProfile) {
+                    let currentList = [...historyRef.current];
+                    const idx = currentList.findIndex(x => x.id === currentMovieRef.current.id);
+                    if (idx > -1) {
+                      currentList[idx].progress = msg.time; currentList[idx].duration = msg.duration;
+                      if (msg.pageTitle) {
+                        const matchStagione = msg.pageTitle.match(/Stagione\s*(\d+)/i);
+                        const matchEpisodio = msg.pageTitle.match(/Episodio\s*(\d+)/i);
+                        if (matchStagione && matchEpisodio) { currentList[idx].episodeInfo = `S${matchStagione[1]} E${matchEpisodio[1]}`; }
+                      }
+                      if (streamingDomain && msg.url && msg.url.includes(streamingDomain.split('//')[1])) { currentList[idx].lastUrl = msg.url; }
+                      setContinueWatching(currentList);
+                      await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(currentList));
                     }
-                    if (streamingDomain && msg.url && msg.url.includes(streamingDomain.split('//')[1])) { currentList[idx].lastUrl = msg.url; }
-                    setContinueWatching(currentList);
-                    await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(currentList));
                   }
-                }
-              } catch(err) {}
-            }}
-          />
+                } catch(err) {}
+              }}
+            />
+          </View>
         </View>
       )}
     </SafeAreaView>
@@ -633,7 +692,7 @@ const styles = StyleSheet.create({
   catActive: { backgroundColor: '#E50914' },
   catText: { color: '#666', fontWeight: 'bold', fontSize: 13 },
   hero: { width: '100%', height: 450, justifyContent: 'flex-end', backgroundColor: '#000', overflow: 'hidden' },
-  heroOverlay: { height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', padding: 30, alignItems: 'center' },
+  heroOverlay: { height: '100%', justifyContent: 'flex-end', padding: 30, alignItems: 'center' },
   heroTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', textAlign: 'center', marginBottom: 20 },
   playBtn: { backgroundColor: 'white', paddingVertical: 12, paddingHorizontal: 40, borderRadius: 5, marginRight: 10 },
   playBtnText: { color: 'black', fontWeight: 'bold', fontSize: 16 },
