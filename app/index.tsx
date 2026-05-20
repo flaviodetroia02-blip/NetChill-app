@@ -10,8 +10,8 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 27 - REDENZIONE: UI PREMIUM TRASPARENTE, FIX CAROSELLO E FIX ERRORE DI RETE
-const APP_VERSION_CODE = 27; 
+// VERSIONE 28 - FIX CARICAMENTO INFINITO, FIX UI OVERLAP, FIX SCRITTE YOUTUBE
+const APP_VERSION_CODE = 28; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -53,7 +53,6 @@ export default function App() {
   const scrollY = useRef(0);
   const trailerTimeout = useRef(null);
 
-  // 🔴 DOMINIO FALLBACK BLINDATO PER EVITARE L'ERRORE "ERR_NAME_NOT_RESOLVED"
   const [streamingDomain, setStreamingDomain] = useState('https://cineblog001.bar');
 
   const [profiles, setProfiles] = useState([]);
@@ -78,7 +77,7 @@ export default function App() {
   const startTrailerTimer = () => {
     clearTimeout(trailerTimeout.current);
     trailerTimeout.current = setTimeout(() => {
-      if (scrollY.current < 100) { setShowTrailer(true); }
+      if (scrollY.current < 250) { setShowTrailer(true); } // Aumentato tolleranza scroll
     }, 3000); 
   };
 
@@ -94,9 +93,9 @@ export default function App() {
   const handleScroll = (event) => {
     const y = event.nativeEvent.contentOffset.y;
     scrollY.current = y;
-    if (y > 100 && showTrailer) {
+    if (y > 250 && showTrailer) {
       setShowTrailer(false); setIsTrailerMuted(true); 
-    } else if (y <= 100 && !showTrailer && trailerKey) {
+    } else if (y <= 250 && !showTrailer && trailerKey) {
       startTrailerTimer();
     }
   };
@@ -127,7 +126,6 @@ export default function App() {
     }
   };
 
-  // Ottimizzazione Raccomandazioni per non far esplodere la UI
   useEffect(() => {
     const buildAdvancedRecommendations = async () => {
       if (!activeProfile) return;
@@ -224,13 +222,17 @@ export default function App() {
       const response = await fetch(GITHUB_RAW_LINK + '?t=' + new Date().getTime());
       if (response.ok) {
         let text = await response.text();
-        text = text.trim(); 
-        if (text.startsWith('http')) {
-          if (text.endsWith('/')) text = text.slice(0, -1);
-          setStreamingDomain(text);
+        let newDomain = text.trim().split('\n')[0].replace(/\/+$/, ""); 
+        if (newDomain.startsWith('http')) {
+          setStreamingDomain(newDomain);
+          await AsyncStorage.setItem('@saved_domain', newDomain); 
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      const savedDomain = await AsyncStorage.getItem('@saved_domain');
+      if (savedDomain) { setStreamingDomain(savedDomain); } 
+      else { setStreamingDomain('https://cineblog001.bar'); }
+    }
   };
 
   const loadInitialConfig = async () => {
@@ -306,15 +308,16 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      // Assicuriamoci che il dominio sia solido per evitare ERR_NAME_NOT_RESOLVED
       const safeDomain = streamingDomain && streamingDomain.startsWith('http') ? streamingDomain : 'https://cineblog001.bar';
       const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
       const searchUrl = `${safeDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanTitle)}`;
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
+      
+      // 🔴 FIX CARICAMENTO INFINITO: Timer blindato a 2.5 secondi. Ignoriamo i re-load della WebView.
       setIsWebViewLoading(true);
-      setTimeout(() => { setIsWebViewLoading(false); }, 3000); 
+      setTimeout(() => { setIsWebViewLoading(false); }, 2500); 
 
     } catch (e) {}
   };
@@ -378,25 +381,23 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
+  // 🔴 FIX SCRITTE YOUTUBE NUCLEARE 🔴
   const ytInject = `
     (function() {
       window.isAppMuted = true;
       const css = document.createElement('style');
-      css.innerHTML = 'body * { visibility: hidden !important; background: transparent !important; } video, video * { visibility: visible !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; }';
+      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, .ytp-chrome-top, .ytp-chrome-bottom, ytm-player-overlay-renderer, ytm-consent-bump-v2-renderer, .page-container, ytm-item-section-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; }';
       document.head.appendChild(css);
       
       setInterval(() => {
         document.querySelectorAll('button').forEach(btn => {
           if ((btn.textContent||'').toLowerCase().includes('accetta')) btn.click();
         });
-        
         var v = document.querySelector('video');
         if (v) {
           v.muted = window.isAppMuted; 
           if (v.paused) v.play().catch(e=>{});
         }
-        var playBtn = document.querySelector('.ytp-large-play-button');
-        if (playBtn && playBtn.style.display !== 'none') playBtn.click();
       }, 500);
     })();
     true;
@@ -567,7 +568,7 @@ export default function App() {
         </Modal>
       )}
 
-      {/* 🔴 HEADER TRASPARENTE FLUTTUANTE (Effetto Premium) 🔴 */}
+      {/* 🔴 HEADER TRASPARENTE: Solo Logo e Ricerca 🔴 */}
       {!targetUrl && (
         <View style={styles.floatingHeader}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 15 }}>
@@ -581,38 +582,40 @@ export default function App() {
               </TouchableOpacity>
             </View>
           </View>
-
-          <View style={styles.mediaToggleContainer}>
-            <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'movie' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('movie'); setSelectedGenre(null); }}>
-              <Text style={[styles.mediaToggleText, mediaType === 'movie' && styles.mediaToggleTextActive]}>🎬 FILM</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'tv' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('tv'); setSelectedGenre(null); }}>
-              <Text style={[styles.mediaToggleText, mediaType === 'tv' && styles.mediaToggleTextActive]}>📺 SERIE</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.catBar}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {GENRES.map(g => (
-                <TouchableOpacity key={g.id} style={[styles.catTab, selectedGenre === g.id && styles.catActive]} onPress={() => { setSelectedGenre(g.id); fetchHomeData(g.id); }}>
-                  <Text style={[styles.catText, selectedGenre === g.id && {color: 'white'}]}>{g.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
         </View>
       )}
 
       {!targetUrl ? (
-        <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
+        <ScrollView style={{flex: 1}} contentContainerStyle={{ paddingTop: 90 }} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
+          {/* 🔴 MENU SPOSTATO QUI: Sotto l'header fluttuante, sopra il carosello 🔴 */}
+          <View style={{ backgroundColor: '#000', paddingBottom: 10 }}>
+            <View style={styles.mediaToggleContainer}>
+              <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'movie' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('movie'); setSelectedGenre(null); }}>
+                <Text style={[styles.mediaToggleText, mediaType === 'movie' && styles.mediaToggleTextActive]}>🎬 FILM</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'tv' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('tv'); setSelectedGenre(null); }}>
+                <Text style={[styles.mediaToggleText, mediaType === 'tv' && styles.mediaToggleTextActive]}>📺 SERIE</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.catBar}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {GENRES.map(g => (
+                  <TouchableOpacity key={g.id} style={[styles.catTab, selectedGenre === g.id && styles.catActive]} onPress={() => { setSelectedGenre(g.id); fetchHomeData(g.id); }}>
+                    <Text style={[styles.catText, selectedGenre === g.id && {color: 'white'}]}>{g.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+
           {view === 'home' ? (
             <>
-              {/* 🔴 CAROSELLO GIGANTE (60% dell'altezza schermo) 🔴 */}
               {heroItems.length > 0 && !loading && (
                 <View style={styles.heroContainer}>
                   <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={handleHeroScroll}>
                     {heroItems.map((item, index) => (
-                      <View key={item.id} style={{ width: screenWidth, height: screenHeight * 0.65, backgroundColor: '#000' }}>
+                      <View key={item.id} style={{ width: screenWidth, height: screenHeight * 0.60, backgroundColor: '#000' }}>
                         
                         <Image source={{ uri: BACKDROP_URL + item.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer && activeHeroIndex === index ? 0 : 1 }]} />
                         
@@ -628,7 +631,6 @@ export default function App() {
                           </View>
                         )}
 
-                        {/* Sfumatura nera in basso per fondere il carosello con i film sotto */}
                         <View style={styles.heroGradient}>
                           <Text style={styles.heroTitle}>{item.title || item.name}</Text>
                           <View style={{flexDirection: 'row', alignItems: 'center'}}>
@@ -683,7 +685,6 @@ export default function App() {
             </>
           ) : (
             <View style={styles.searchGrid}>
-              <View style={{height: 150}} /> {/* Spazio per l'header trasparente */}
               <Text style={styles.rowTitle}>Risultati per: {searchQuery}</Text>
               <View style={styles.grid}>
                 {sections.searchResults.map(m => (
@@ -715,12 +716,12 @@ export default function App() {
 
             <WebView 
               ref={webViewRef}
+              // 🔴 RIMOSSO onLoadStart: Il caricamento dipende SOLO dal nostro timer!
               source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
               userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
               sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} 
               injectedJavaScript={dynamicJS} injectedJavaScriptForMainFrameOnly={false} 
               style={{ flex: 1, backgroundColor: '#000' }} allowsInlineMediaPlayback={true} allowsFullscreenVideo={true} mediaPlaybackRequiresUserAction={false}
-              onLoadStart={() => setIsWebViewLoading(true)}
               onMessage={async (e) => {
                 try {
                   const msg = JSON.parse(e.nativeEvent.data);
@@ -787,15 +788,16 @@ const styles = StyleSheet.create({
   splash: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   splashLetter: { color: '#E50914', fontSize: 50, fontWeight: '900', marginHorizontal: -1 }, 
   
-  // HEADER FLUTTUANTE
+  // HEADER FLUTTUANTE: Solo Logo e Ricerca
   floatingHeader: { position: 'absolute', top: 0, width: '100%', zIndex: 100, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 40, backgroundColor: 'rgba(0,0,0,0.6)' },
   logo: { color: '#E50914', fontSize: 28, fontWeight: '900', letterSpacing: -1, textShadowColor: 'black', textShadowRadius: 10 },
   searchBar: { backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', padding: 8, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   
-  mediaToggleContainer: { flexDirection: 'row', paddingHorizontal: 15, marginTop: 15, marginBottom: 10 },
+  // MENU FILM E SERIE: Spostato giù nel normale flusso
+  mediaToggleContainer: { flexDirection: 'row', paddingHorizontal: 15, marginBottom: 15 },
   mediaToggleBtn: { marginRight: 20, paddingBottom: 5 },
   mediaToggleBtnActive: { borderBottomWidth: 2, borderBottomColor: '#E50914' },
-  mediaToggleText: { color: '#aaa', fontWeight: 'bold', fontSize: 16, textShadowColor: 'black', textShadowRadius: 5 },
+  mediaToggleText: { color: '#aaa', fontWeight: 'bold', fontSize: 16 },
   mediaToggleTextActive: { color: 'white' },
   
   catBar: { paddingLeft: 10, paddingBottom: 15 },
@@ -803,7 +805,6 @@ const styles = StyleSheet.create({
   catActive: { backgroundColor: '#E50914', borderColor: '#E50914' },
   catText: { color: '#ddd', fontWeight: 'bold', fontSize: 13 },
   
-  // HERO CAROUSEL
   heroContainer: { width: '100%', backgroundColor: '#000' },
   heroGradient: { height: '100%', justifyContent: 'flex-end', padding: 30, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', borderBottomWidth: 50, borderBottomColor: 'rgba(0,0,0,0.8)' },
   heroTitle: { color: 'white', fontSize: 36, fontWeight: '900', textAlign: 'center', marginBottom: 20, textShadowColor: 'black', textShadowRadius: 15 },
@@ -817,7 +818,7 @@ const styles = StyleSheet.create({
   heroAddBtnText: { color: 'white', fontWeight: 'bold', fontSize: 18 },
   muteBtn: { position: 'absolute', bottom: 30, right: 20, backgroundColor: 'rgba(0,0,0,0.6)', width: 45, height: 45, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   
-  content: { paddingTop: 20 }, // Spazio dopo il carosello
+  content: { paddingTop: 20 },
   rowTitle: { color: 'white', fontSize: 20, fontWeight: 'bold', marginLeft: 15, marginBottom: 15, letterSpacing: -0.5 },
   card: { marginLeft: 15, width: 130 },
   cardImg: { width: 130, height: 195, borderRadius: 8, backgroundColor: '#111' },
