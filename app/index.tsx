@@ -1,16 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, BackHandler, Image, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Linking } from 'react-native';
+import { ActivityIndicator, Animated, BackHandler, Dimensions, Image, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 // --- CONFIGURAZIONE ---
 const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
+const { width: screenWidth } = Dimensions.get('window'); 
 
-// VERSIONE 23 - FIX SIPARIO NERO (Fail-safe) E PULIZIA ESTREMA YOUTUBE
-const APP_VERSION_CODE = 23; 
+// VERSIONE 26 - ALGORITMO DI RACCOMANDAZIONE A MATRICE INCROCIATA
+const APP_VERSION_CODE = 26; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -29,13 +30,17 @@ const AVATARS = ['😎', '👽', '👾', '👻', '🤖', '🤠', '🦊', '🐱']
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
-  const [sections, setSections] = useState({ trending: [], movies: [], series: [], searchResults: [] });
+  const [sections, setSections] = useState({ trending: [], pop: [], top: [], searchResults: [] });
   const [continueWatching, setContinueWatching] = useState([]); 
   const [myList, setMyList] = useState([]); 
   const [recommendations, setRecommendations] = useState([]);
-  const [featured, setFeatured] = useState(null);
+  
+  const [heroItems, setHeroItems] = useState([]);
+  const [activeHeroIndex, setActiveHeroIndex] = useState(0);
+
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('home'); 
+  const [mediaType, setMediaType] = useState('movie'); 
   const [selectedGenre, setSelectedGenre] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -43,7 +48,6 @@ export default function App() {
   const [currentMovie, setCurrentMovie] = useState(null); 
   const [isWebViewLoading, setIsWebViewLoading] = useState(false);
 
-  // --- STATI PER L'EFFETTO PRIME VIDEO ---
   const [showTrailer, setShowTrailer] = useState(false);
   const [isTrailerMuted, setIsTrailerMuted] = useState(true); 
   const scrollY = useRef(0);
@@ -73,30 +77,39 @@ export default function App() {
   const startTrailerTimer = () => {
     clearTimeout(trailerTimeout.current);
     trailerTimeout.current = setTimeout(() => {
-      if (scrollY.current < 150) {
-        setShowTrailer(true);
-      }
+      if (scrollY.current < 150) { setShowTrailer(true); }
     }, 3000); 
   };
 
   useEffect(() => {
-    if (featured && trailerKey) {
+    if (heroItems.length > 0 && trailerKey) {
       setShowTrailer(false);
       setIsTrailerMuted(true); 
       startTrailerTimer();
     }
     return () => clearTimeout(trailerTimeout.current);
-  }, [featured, trailerKey]);
+  }, [activeHeroIndex, trailerKey]); 
 
   const handleScroll = (event) => {
     const y = event.nativeEvent.contentOffset.y;
     scrollY.current = y;
-
     if (y > 150 && showTrailer) {
-      setShowTrailer(false);
-      setIsTrailerMuted(true); 
+      setShowTrailer(false); setIsTrailerMuted(true); 
     } else if (y <= 150 && !showTrailer && trailerKey) {
       startTrailerTimer();
+    }
+  };
+
+  const handleHeroScroll = (event) => {
+    const slideSize = event.nativeEvent.layoutMeasurement.width;
+    const index = Math.round(event.nativeEvent.contentOffset.x / slideSize);
+    if (index !== activeHeroIndex) {
+      setActiveHeroIndex(index);
+      setShowTrailer(false); 
+      setTrailerKey(null); 
+      if (heroItems[index]) {
+        fetchTrailer(heroItems[index].id, mediaType); 
+      }
     }
   };
 
@@ -113,39 +126,71 @@ export default function App() {
     }
   };
 
+  // 🔴 IL NUOVO CERVELLO: ALGORITMO A MATRICE INCROCIATA 🔴
   useEffect(() => {
-    const buildRecommendations = async () => {
+    const buildAdvancedRecommendations = async () => {
       if (!activeProfile) return;
       try {
-        const allItems = [...continueWatching, ...myList];
-        if (allItems.length === 0) {
-          setRecommendations([]);
+        const historyItems = continueWatching.filter(i => i.media_type === mediaType || (!i.media_type && mediaType === 'movie'));
+        const listItems = myList.filter(i => i.media_type === mediaType || (!i.media_type && mediaType === 'movie'));
+
+        // 1. Estrazione dei "Semi" (ultimi 3 visti, ultimi 2 in lista)
+        const seedItems = [...historyItems.slice(0, 3), ...listItems.slice(0, 2)];
+
+        if (seedItems.length === 0) {
+          // L'utente è nuovo: mostra titoli popolari di base
+          const fallback = await fetch(`https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc`).then(r => r.json());
+          setRecommendations(fallback.results.slice(0, 10));
           return;
         }
-        const genreCounts = {};
-        allItems.forEach(item => {
-          if (item.genre_ids && Array.isArray(item.genre_ids)) {
-            item.genre_ids.forEach(id => { genreCounts[id] = (genreCounts[id] || 0) + 1; });
+
+        // 2. Interrogazione del database TMDB per similitudini
+        const allRecs = [];
+        for (const item of seedItems) {
+          const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.id}/recommendations?api_key=${TMDB_API_KEY}&language=it-IT`).then(r => r.json());
+          if (res.results) {
+            allRecs.push(...res.results);
           }
+        }
+
+        // 3. Sistema a Punteggio (Cross-referencing)
+        const recScores = {};
+        const recData = {};
+        
+        allRecs.forEach(rec => {
+          if (!recScores[rec.id]) {
+            recScores[rec.id] = 0;
+            recData[rec.id] = rec;
+          }
+          recScores[rec.id] += 1; // +1 punto per ogni volta che viene suggerito
+          recScores[rec.id] += (rec.vote_average / 10); // Bonus qualità (voti alti TMDB)
         });
-        const sortedGenres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
-        if (sortedGenres.length === 0) return;
-        const topGenre = sortedGenres[0];
-        const res = await fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc&with_genres=${topGenre}`).then(r => r.json());
-        const knownIds = new Set(allItems.map(i => i.id));
-        const freshMovies = res.results.filter(m => !knownIds.has(m.id)).slice(0, 10);
-        setRecommendations(freshMovies);
+
+        const knownIds = new Set([...continueWatching.map(i => i.id), ...myList.map(i => i.id)]);
+        
+        // 4. Filtro e Ordinamento Finale
+        const finalRecs = Object.values(recData)
+          .filter(rec => !knownIds.has(rec.id)) // Esclude i titoli già visti o in lista
+          .sort((a, b) => recScores[b.id] - recScores[a.id]) // Ordina dal più affine al meno affine
+          .slice(0, 12); 
+
+        // Paracadute di emergenza se TMDB non ha raccomandazioni specifiche
+        if (finalRecs.length < 3) {
+           const topGenre = seedItems[0].genre_ids?.[0];
+           const fallback = await fetch(`https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&with_genres=${topGenre}`).then(r => r.json());
+           setRecommendations(fallback.results.filter(m => !knownIds.has(m.id)).slice(0, 10));
+        } else {
+           setRecommendations(finalRecs);
+        }
+
       } catch(e) {}
     };
-    buildRecommendations();
-  }, [historyIds, listIds, activeProfile]);
+    buildAdvancedRecommendations();
+  }, [historyIds, listIds, activeProfile, mediaType]);
 
   useEffect(() => {
     const backAction = () => {
-      if (targetUrl) {
-        if (webViewRef.current) webViewRef.current.goBack();
-        return true; 
-      }
+      if (targetUrl) { if (webViewRef.current) webViewRef.current.goBack(); return true; }
       return false; 
     };
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
@@ -166,6 +211,8 @@ export default function App() {
     checkForUpdates();
   }, []);
 
+  useEffect(() => { fetchHomeData(selectedGenre); }, [mediaType]);
+
   const checkForUpdates = async () => {
     try {
       const response = await fetch(GITHUB_UPDATE_LINK + '?t=' + new Date().getTime());
@@ -176,12 +223,12 @@ export default function App() {
     } catch (e) {}
   };
 
-  const fetchTrailer = async (id, mediaType) => {
+  const fetchTrailer = async (id, type) => {
     try {
-      const type = mediaType === 'tv' ? 'tv' : 'movie';
-      let res = await fetch(`https://api.themoviedb.org/3/${type}/${id}/videos?api_key=${TMDB_API_KEY}&language=it-IT`).then(r => r.json());
+      const fetchType = type === 'tv' ? 'tv' : 'movie';
+      let res = await fetch(`https://api.themoviedb.org/3/${fetchType}/${id}/videos?api_key=${TMDB_API_KEY}&language=it-IT`).then(r => r.json());
       if (!res.results || res.results.length === 0) {
-        res = await fetch(`https://api.themoviedb.org/3/${type}/${id}/videos?api_key=${TMDB_API_KEY}&language=en-US`).then(r => r.json());
+        res = await fetch(`https://api.themoviedb.org/3/${fetchType}/${id}/videos?api_key=${TMDB_API_KEY}&language=en-US`).then(r => r.json());
       }
       const trailer = res.results?.find(v => v.type === 'Trailer' && v.site === 'YouTube') || res.results?.find(v => v.site === 'YouTube') || res.results?.[0];
       if (trailer) { setTrailerKey(trailer.key); } else { setTrailerKey(null); }
@@ -246,7 +293,7 @@ export default function App() {
       let currentList = [...myList];
       const exists = currentList.find(x => x.id === item.id);
       if (exists) { currentList = currentList.filter(x => x.id !== item.id); } else {
-        currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path, genre_ids: item.genre_ids });
+        currentList.unshift({ id: item.id, title: item.title || item.name, poster_path: item.poster_path, genre_ids: item.genre_ids, media_type: mediaType });
       }
       setMyList(currentList);
       await AsyncStorage.setItem(`@my_list_${activeProfile.id}`, JSON.stringify(currentList));
@@ -267,10 +314,10 @@ export default function App() {
       const newItem = {
         id: item.id, title: item.title || item.name, poster_path: item.poster_path,
         progress: progressToSave, duration: durationToSave, lastUrl: lastUrlToSave, episodeInfo: episodeInfoToSave,
-        genre_ids: item.genre_ids || existing?.genre_ids 
+        genre_ids: item.genre_ids || existing?.genre_ids, media_type: mediaType 
       };
       
-      const updatedList = [newItem, ...currentHistory].slice(0, 10);
+      const updatedList = [newItem, ...currentHistory].slice(0, 15); 
       setContinueWatching(updatedList);
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
@@ -280,12 +327,8 @@ export default function App() {
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
-      
-      // 🔴 FIX SIPARIO NERO: Attiva il caricamento, ma imposta un limite massimo di 3 secondi!
       setIsWebViewLoading(true);
-      setTimeout(() => {
-        setIsWebViewLoading(false);
-      }, 3000); 
+      setTimeout(() => { setIsWebViewLoading(false); }, 3000); 
 
     } catch (e) {}
   };
@@ -294,20 +337,26 @@ export default function App() {
     setLoading(true);
     try {
       const gParam = genreId ? `&with_genres=${genreId}` : '';
+      
       const trendingUrl = genreId 
-        ? `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc${gParam}`
-        : `https://api.themoviedb.org/3/trending/all/week?api_key=${TMDB_API_KEY}&language=it-IT`;
+        ? `https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc${gParam}`
+        : `https://api.themoviedb.org/3/trending/${mediaType}/week?api_key=${TMDB_API_KEY}&language=it-IT`;
+        
+      const popUrl = `https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc${gParam}&page=2`;
+      const topUrl = `https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=vote_count.desc${gParam}`;
 
-      const [trending, movies, series] = await Promise.all([
+      const [trending, pop, top] = await Promise.all([
         fetch(trendingUrl).then(res => res.json()),
-        fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=vote_count.desc${gParam}`).then(res => res.json()),
-        fetch(`https://api.themoviedb.org/3/discover/tv?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc${gParam}`).then(res => res.json()),
+        fetch(popUrl).then(res => res.json()),
+        fetch(topUrl).then(res => res.json()),
       ]);
 
-      const firstItem = trending.results[0];
-      setFeatured(firstItem);
-      if (firstItem) { fetchTrailer(firstItem.id, firstItem.media_type); }
-      setSections({ trending: trending.results.slice(1, 15), movies: movies.results, series: series.results, searchResults: [] });
+      const top7 = trending.results.slice(0, 7);
+      setHeroItems(top7);
+      setActiveHeroIndex(0);
+      if (top7[0]) { fetchTrailer(top7[0].id, mediaType); }
+      
+      setSections({ trending: trending.results.slice(7, 20), pop: pop.results, top: top.results, searchResults: [] });
       setLoading(false);
     } catch (e) { setLoading(false); }
   };
@@ -339,18 +388,12 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // 🔴 VERSIONE 23: CENSURA ESTREMA INTERFACCIA YOUTUBE 🔴
   const ytInject = `
     (function() {
       window.isAppMuted = true;
       const css = document.createElement('style');
-      
-      // Nascondiamo violentemente TUTTI gli elementi di interfaccia, inclusi overlay e sfumature
-      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, ytm-item-section-renderer, .page-container, .related-items-container, ytm-promoted-sparkles-web-renderer, .ad-showing, ytm-consent-bump-v2-renderer, ytm-player-overlay, .ytp-chrome-top, .ytp-chrome-bottom, .ytp-watermark, .ytp-gradient-top, .ytp-gradient-bottom { display: none !important; opacity: 0 !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; }';
-      
+      css.innerHTML = 'body * { visibility: hidden !important; background: transparent !important; } video, video * { visibility: visible !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; }';
       document.head.appendChild(css);
-      
-      let initDone = false;
       
       setInterval(() => {
         document.querySelectorAll('button').forEach(btn => {
@@ -359,36 +402,24 @@ export default function App() {
         
         var v = document.querySelector('video');
         if (v) {
-          if(!initDone) {
-            v.muted = true; 
-            initDone = true;
-          } else {
-            v.muted = window.isAppMuted; 
-          }
+          v.muted = window.isAppMuted; 
           if (v.paused) v.play().catch(e=>{});
         }
-        
-        var playBtn = document.querySelector('.ytp-large-play-button') || document.querySelector('.icon-button');
+        var playBtn = document.querySelector('.ytp-large-play-button');
         if (playBtn && playBtn.style.display !== 'none') playBtn.click();
-        
-        var adSkip = document.querySelector('.ytp-ad-skip-button') || document.querySelector('.ytp-skip-ad-button');
-        if(adSkip) adSkip.click();
       }, 500);
     })();
     true;
   `;
 
-  // 🔴 VERSIONE 23: SPAZZINO CB01 OTTIMIZZATO (Più sicuro) 🔴
   const dynamicJS = `
     (function() {
       const tvStyle = document.createElement('style');
       tvStyle.innerHTML = \`
         html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-        
         header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb, form, center, .speedbar, .berrors { 
           display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
         }
-        
         #dle-content, main, .content, article { 
           width: 100vw !important; max-width: 100% !important; padding: 20px !important; margin: 0 auto !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; align-items: center !important;
         }
@@ -396,7 +427,6 @@ export default function App() {
         .short img { transform: scale(1.1) !important; border-radius: 12px !important; margin-bottom: 15px !important; }
         .story-heading { font-size: 26px !important; margin-top: 20px !important; font-family: sans-serif !important; }
         .story-heading a { color: #ffffff !important; text-decoration: none !important; }
-        
         iframe#iFrameResizer0, iframe, .video-container {
           width: 100% !important; max-width: 900px !important; aspect-ratio: 16 / 9 !important; height: auto !important; border-radius: 12px !important; border: 2px solid #222 !important; margin-top: 15px !important; box-shadow: 0px 10px 30px rgba(0,0,0,0.8) !important;
         }
@@ -405,18 +435,13 @@ export default function App() {
 
       window.open = function() { return null; }; 
 
-      document.addEventListener('click', function(e) {
-        let target = e.target.closest('a');
-        if (target) {
-          if (target.href && !target.href.includes(window.location.hostname) && !target.href.startsWith('/')) {
-            e.preventDefault(); e.stopPropagation(); return false;
-          }
-          if (target.target === '_blank') target.target = '_self';
+      window.addEventListener('message', function(e) {
+        if (e.data && e.data.type === 'TIME_UPDATE') {
+          try { window.ReactNativeWebView.postMessage(JSON.stringify(e.data)); } catch(err){}
         }
-      }, true);
+      });
 
       setInterval(() => {
-        // Overlay anti-bot
         document.querySelectorAll('div').forEach(el => {
           const style = window.getComputedStyle(el);
           if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 50) {
@@ -424,39 +449,13 @@ export default function App() {
           }
         });
 
-        // Censura parole chiave: colpiamo solo i tag di testo piccoli, per non rischiare di cancellare l'intera pagina!
         document.querySelectorAll('a, p, span, b, strong').forEach(el => {
           const txt = (el.textContent || '').toLowerCase();
-          if (
-            txt.includes('cliccaci per') || 
-            txt.includes('scarica download') || 
-            txt.includes('hd/4k gratis') ||
-            txt.includes('l\\'indirizzo ufficiale') ||
-            txt.includes('cerca su cb01') ||
-            txt.includes('film streaming e download') ||
-            txt.includes('risultati di ricerca')
-          ) {
+          if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis') || txt.includes('l\\'indirizzo ufficiale') || txt.includes('cerca su cb01') || txt.includes('film streaming') || txt.includes('risultati di ricerca')) {
             el.style.display = 'none';
           }
         });
-        
-        if (!window.location.href.includes('do=search') && !window.location.href.includes('/search/')) {
-          const playerFrame = document.querySelector('iframe#iFrameResizer0') || document.querySelector('iframe');
-          if (playerFrame && !window.hasScrolledToVideo) {
-             playerFrame.scrollIntoView({behavior: 'smooth', block: 'center'});
-             window.hasScrolledToVideo = true;
-          }
-        }
       }, 500);
-
-      // Errore custom
-      if (window.location.href.includes('do=search') || window.location.href.includes('/search/')) {
-        setTimeout(() => {
-          if (document.body.innerText.includes('Nessun Film risponde ai criteri di ricerca impostati') || document.body.innerText.includes('non trovato')) {
-            document.body.innerHTML = '<div style="display:flex; height:100vh; width:100vw; justify-content:center; align-items:center; background:black;"><h2 style="color:white; font-family:sans-serif; text-align:center;">Film non trovato nel server.<br><br>Premi INDIETRO sul telecomando 😔</h2></div>';
-          }
-        }, 1000);
-      }
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
@@ -466,36 +465,38 @@ export default function App() {
         v.dataset.hooked = "true"; 
         const trySeek = () => {
           if (!hasSeeked && v.readyState >= 1) {
-            if (Math.abs(v.currentTime - initialSavedTime) > 3) { v.currentTime = initialSavedTime; } 
-            else { hasSeeked = true; }
+            if (Math.abs(v.currentTime - initialSavedTime) > 5) { 
+              v.currentTime = initialSavedTime; 
+            } else { 
+              hasSeeked = true; 
+            }
           }
         };
         v.addEventListener('loadedmetadata', trySeek);
         v.addEventListener('playing', trySeek);
-        const seekInt = setInterval(() => {
-          if (hasSeeked) { clearInterval(seekInt); return; }
-          trySeek();
-        }, 500);
-        v.addEventListener('timeupdate', () => {
-          if (location.href !== currentUrl) {
-            currentUrl = location.href; hasSeeked = true; initialSavedTime = 0;
-          }
+        
+        setInterval(() => {
+          if (!hasSeeked) trySeek();
           if (hasSeeked && v.currentTime > 0 && !v.paused) {
             if (Math.abs(v.currentTime - lastSaved) > 5) {
               lastSaved = v.currentTime;
-              try {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                  type: 'TIME_UPDATE', time: v.currentTime, duration: v.duration || 0, url: location.href, pageTitle: document.title
-                }));
-              } catch(e) {}
+              let payload = { type: 'TIME_UPDATE', time: v.currentTime, duration: v.duration || 0, url: location.href, pageTitle: document.title };
+              if (window !== window.parent) {
+                window.parent.postMessage(payload, '*');
+              } else {
+                try { window.ReactNativeWebView.postMessage(JSON.stringify(payload)); } catch(e) {}
+              }
             }
           }
-        });
+        }, 1000);
       }
       setInterval(() => { document.querySelectorAll('video').forEach(attachToVideo); }, 1000);
     })();
     true;
   `;
+
+  const filteredHistory = continueWatching.filter(x => (mediaType === 'movie' ? (!x.media_type || x.media_type === 'movie') : x.media_type === 'tv'));
+  const filteredMyList = myList.filter(x => (mediaType === 'movie' ? (!x.media_type || x.media_type === 'movie') : x.media_type === 'tv'));
 
   if (showSplash) {
     const glowColor = glowAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(229, 9, 20, 0)', 'rgba(229, 9, 20, 0.9)'] });
@@ -589,14 +590,25 @@ export default function App() {
       </View>
 
       {!targetUrl && (
-        <View style={styles.catBar}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {GENRES.map(g => (
-              <TouchableOpacity key={g.id} style={[styles.catTab, selectedGenre === g.id && styles.catActive]} onPress={() => { setSelectedGenre(g.id); fetchHomeData(g.id); }}>
-                <Text style={[styles.catText, selectedGenre === g.id && {color: 'white'}]}>{g.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+        <View>
+          <View style={styles.mediaToggleContainer}>
+            <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'movie' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('movie'); setSelectedGenre(null); }}>
+              <Text style={[styles.mediaToggleText, mediaType === 'movie' && styles.mediaToggleTextActive]}>🎬 FILM</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'tv' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('tv'); setSelectedGenre(null); }}>
+              <Text style={[styles.mediaToggleText, mediaType === 'tv' && styles.mediaToggleTextActive]}>📺 SERIE TV</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.catBar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {GENRES.map(g => (
+                <TouchableOpacity key={g.id} style={[styles.catTab, selectedGenre === g.id && styles.catActive]} onPress={() => { setSelectedGenre(g.id); fetchHomeData(g.id); }}>
+                  <Text style={[styles.catText, selectedGenre === g.id && {color: 'white'}]}>{g.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
         </View>
       )}
 
@@ -604,57 +616,75 @@ export default function App() {
         <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
           {view === 'home' ? (
             <>
-              {featured && !loading && (
-                <View style={styles.hero}>
-                  <Image source={{ uri: BACKDROP_URL + featured.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer ? 0 : 1 }]} />
+              {heroItems.length > 0 && !loading && (
+                <View style={styles.heroContainer}>
+                  <ScrollView
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    onMomentumScrollEnd={handleHeroScroll}
+                  >
+                    {heroItems.map((item, index) => (
+                      <View key={item.id} style={{ width: screenWidth, height: 450, backgroundColor: '#000' }}>
+                        
+                        <Image source={{ uri: BACKDROP_URL + item.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer && activeHeroIndex === index ? 0 : 1 }]} />
+                        
+                        {trailerKey && showTrailer && activeHeroIndex === index && (
+                          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                            <WebView
+                              ref={trailerWebViewRef}
+                              style={{ flex: 1, backgroundColor: 'black' }}
+                              javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
+                              source={{ uri: `https://m.youtube.com/watch?v=${trailerKey}` }}
+                              injectedJavaScript={ytInject}
+                              injectedJavaScriptForMainFrameOnly={false}
+                            />
+                          </View>
+                        )}
+
+                        <View style={[styles.heroOverlay, { backgroundColor: showTrailer && activeHeroIndex === index ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.6)' }]}>
+                          <Text style={styles.heroTitle}>{item.title || item.name}</Text>
+                          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                            <TouchableOpacity style={styles.playBtn} onPress={() => startPlaying(item)}>
+                              <Text style={styles.playBtnText}>▶ RIPRODUCI</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.heroAddBtn} onPress={() => toggleMyList(item)}>
+                              <Text style={styles.heroAddBtnText}>{myList.find(x => x.id === item.id) ? '✓' : '+'}</Text>
+                            </TouchableOpacity>
+                          </View>
+                          
+                          {showTrailer && activeHeroIndex === index && (
+                            <TouchableOpacity style={styles.muteBtn} onPress={toggleTrailerAudio}>
+                              <Text style={{fontSize: 16}}>{isTrailerMuted ? '🔇' : '🔊'}</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    ))}
+                  </ScrollView>
                   
-                  {trailerKey && showTrailer && (
-                    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      <WebView
-                        ref={trailerWebViewRef}
-                        style={{ flex: 1, backgroundColor: 'black' }}
-                        javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
-                        source={{ uri: `https://m.youtube.com/watch?v=${trailerKey}` }}
-                        injectedJavaScript={ytInject}
-                        injectedJavaScriptForMainFrameOnly={false}
-                      />
-                    </View>
-                  )}
-
-                  <View style={[styles.heroOverlay, { backgroundColor: showTrailer ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.6)' }]}>
-                    <Text style={styles.heroTitle}>{featured.title || featured.name}</Text>
-                    <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                      <TouchableOpacity style={styles.playBtn} onPress={() => startPlaying(featured)}>
-                        <Text style={styles.playBtnText}>▶ RIPRODUCI</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.heroAddBtn} onPress={() => toggleMyList(featured)}>
-                        <Text style={styles.heroAddBtnText}>{myList.find(x => x.id === featured.id) ? '✓' : '+'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                    
-                    {showTrailer && (
-                      <TouchableOpacity style={styles.muteBtn} onPress={toggleTrailerAudio}>
-                        <Text style={{fontSize: 16}}>{isTrailerMuted ? '🔇' : '🔊'}</Text>
-                      </TouchableOpacity>
-                    )}
-
+                  <View style={styles.dotsContainer}>
+                    {heroItems.map((_, i) => (
+                      <View key={i} style={[styles.dot, activeHeroIndex === i && styles.activeDot]} />
+                    ))}
                   </View>
                 </View>
               )}
+              
               {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 50}} /> : (
                 <View style={styles.content}>
-                  {continueWatching.length > 0 && !selectedGenre && (
-                    <Row title={`Continua a guardare, ${activeProfile.name}`} data={continueWatching} onPlay={(i) => startPlaying(i, true)} isHistory myList={myList} onToggleList={toggleMyList} />
+                  {filteredHistory.length > 0 && !selectedGenre && (
+                    <Row title={`Continua a guardare, ${activeProfile.name}`} data={filteredHistory} onPlay={(i) => startPlaying(i, true)} isHistory myList={myList} onToggleList={toggleMyList} />
                   )}
                   {recommendations.length > 0 && !selectedGenre && (
                     <Row title={`Scelti per te, ${activeProfile.name}`} data={recommendations} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   )}
-                  {myList.length > 0 && !selectedGenre && (
-                    <Row title="La mia Lista" data={myList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  {filteredMyList.length > 0 && !selectedGenre && (
+                    <Row title="La mia Lista" data={filteredMyList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   )}
                   <Row title={selectedGenre ? "I migliori della categoria" : "Tendenze della settimana"} data={sections.trending} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
-                  <Row title="Film Consigliati" data={sections.movies} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
-                  <Row title="Serie TV" data={sections.series} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  <Row title={mediaType === 'movie' ? "Film Consigliati" : "Serie TV Consigliate"} data={sections.pop} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  <Row title="I Più Votati" data={sections.top} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                 </View>
               )}
             </>
@@ -697,7 +727,6 @@ export default function App() {
               injectedJavaScript={dynamicJS} injectedJavaScriptForMainFrameOnly={false} 
               style={{ flex: 1, backgroundColor: '#000' }} allowsInlineMediaPlayback={true} allowsFullscreenVideo={true} mediaPlaybackRequiresUserAction={false}
               onLoadStart={() => setIsWebViewLoading(true)}
-              onLoadEnd={() => setIsWebViewLoading(false)}
               onMessage={async (e) => {
                 try {
                   const msg = JSON.parse(e.nativeEvent.data);
@@ -766,18 +795,26 @@ const styles = StyleSheet.create({
   header: { padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   logo: { color: '#E50914', fontSize: 26, fontWeight: 'bold', letterSpacing: -1 },
   searchBar: { backgroundColor: '#1A1A1A', color: 'white', padding: 10, borderRadius: 20, paddingHorizontal: 15 },
+  mediaToggleContainer: { flexDirection: 'row', paddingHorizontal: 15, marginBottom: 15, marginTop: -5 },
+  mediaToggleBtn: { flex: 1, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: '#333', alignItems: 'center' },
+  mediaToggleBtnActive: { borderBottomColor: '#E50914' },
+  mediaToggleText: { color: '#666', fontWeight: 'bold', fontSize: 16 },
+  mediaToggleTextActive: { color: 'white' },
   catBar: { marginBottom: 15, paddingLeft: 10 },
   catTab: { paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, marginRight: 10, backgroundColor: '#111' },
   catActive: { backgroundColor: '#E50914' },
   catText: { color: '#666', fontWeight: 'bold', fontSize: 13 },
-  hero: { width: '100%', height: 450, justifyContent: 'flex-end', backgroundColor: '#000', overflow: 'hidden' },
+  heroContainer: { width: '100%', height: 450, backgroundColor: '#000' },
   heroOverlay: { height: '100%', justifyContent: 'flex-end', padding: 30, alignItems: 'center' },
   heroTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', textAlign: 'center', marginBottom: 20 },
+  dotsContainer: { flexDirection: 'row', position: 'absolute', bottom: 10, alignSelf: 'center' },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)', marginHorizontal: 4 },
+  activeDot: { backgroundColor: 'white', width: 8, height: 8, borderRadius: 4, transform: [{translateY: -1}] },
   playBtn: { backgroundColor: 'white', paddingVertical: 12, paddingHorizontal: 40, borderRadius: 5, marginRight: 10 },
   playBtnText: { color: 'black', fontWeight: 'bold', fontSize: 16 },
   heroAddBtn: { backgroundColor: 'rgba(50,50,50,0.8)', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 5, justifyContent: 'center' },
   heroAddBtnText: { color: 'white', fontWeight: 'bold', fontSize: 18 },
-  muteBtn: { position: 'absolute', bottom: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.6)', width: 45, height: 45, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+  muteBtn: { position: 'absolute', bottom: 30, right: 20, backgroundColor: 'rgba(0,0,0,0.6)', width: 45, height: 45, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   rowTitle: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 15, marginBottom: 15 },
   card: { marginLeft: 15, width: 130 },
   cardImg: { width: 130, height: 195, borderRadius: 10, backgroundColor: '#111' },
