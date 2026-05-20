@@ -8,10 +8,10 @@ import { WebView } from 'react-native-webview';
 const TMDB_API_KEY = "d3667aaae610489566261eb4cff9f348";
 const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
-const { width: screenWidth } = Dimensions.get('window'); 
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 26 - ALGORITMO DI RACCOMANDAZIONE A MATRICE INCROCIATA
-const APP_VERSION_CODE = 26; 
+// VERSIONE 27 - REDENZIONE: UI PREMIUM TRASPARENTE, FIX CAROSELLO E FIX ERRORE DI RETE
+const APP_VERSION_CODE = 27; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -53,7 +53,8 @@ export default function App() {
   const scrollY = useRef(0);
   const trailerTimeout = useRef(null);
 
-  const [streamingDomain, setStreamingDomain] = useState('https://cb01.tv');
+  // 🔴 DOMINIO FALLBACK BLINDATO PER EVITARE L'ERRORE "ERR_NAME_NOT_RESOLVED"
+  const [streamingDomain, setStreamingDomain] = useState('https://cineblog001.bar');
 
   const [profiles, setProfiles] = useState([]);
   const [activeProfile, setActiveProfile] = useState(null);
@@ -77,7 +78,7 @@ export default function App() {
   const startTrailerTimer = () => {
     clearTimeout(trailerTimeout.current);
     trailerTimeout.current = setTimeout(() => {
-      if (scrollY.current < 150) { setShowTrailer(true); }
+      if (scrollY.current < 100) { setShowTrailer(true); }
     }, 3000); 
   };
 
@@ -93,9 +94,9 @@ export default function App() {
   const handleScroll = (event) => {
     const y = event.nativeEvent.contentOffset.y;
     scrollY.current = y;
-    if (y > 150 && showTrailer) {
+    if (y > 100 && showTrailer) {
       setShowTrailer(false); setIsTrailerMuted(true); 
-    } else if (y <= 150 && !showTrailer && trailerKey) {
+    } else if (y <= 100 && !showTrailer && trailerKey) {
       startTrailerTimer();
     }
   };
@@ -126,64 +127,47 @@ export default function App() {
     }
   };
 
-  // 🔴 IL NUOVO CERVELLO: ALGORITMO A MATRICE INCROCIATA 🔴
+  // Ottimizzazione Raccomandazioni per non far esplodere la UI
   useEffect(() => {
     const buildAdvancedRecommendations = async () => {
       if (!activeProfile) return;
       try {
         const historyItems = continueWatching.filter(i => i.media_type === mediaType || (!i.media_type && mediaType === 'movie'));
         const listItems = myList.filter(i => i.media_type === mediaType || (!i.media_type && mediaType === 'movie'));
-
-        // 1. Estrazione dei "Semi" (ultimi 3 visti, ultimi 2 in lista)
-        const seedItems = [...historyItems.slice(0, 3), ...listItems.slice(0, 2)];
+        const seedItems = [...historyItems.slice(0, 2), ...listItems.slice(0, 1)];
 
         if (seedItems.length === 0) {
-          // L'utente è nuovo: mostra titoli popolari di base
           const fallback = await fetch(`https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc`).then(r => r.json());
-          setRecommendations(fallback.results.slice(0, 10));
+          setRecommendations(fallback.results ? fallback.results.slice(0, 10) : []);
           return;
         }
 
-        // 2. Interrogazione del database TMDB per similitudini
         const allRecs = [];
         for (const item of seedItems) {
           const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.id}/recommendations?api_key=${TMDB_API_KEY}&language=it-IT`).then(r => r.json());
-          if (res.results) {
-            allRecs.push(...res.results);
-          }
+          if (res.results) allRecs.push(...res.results);
         }
 
-        // 3. Sistema a Punteggio (Cross-referencing)
-        const recScores = {};
-        const recData = {};
-        
+        const recScores = {}; const recData = {};
         allRecs.forEach(rec => {
-          if (!recScores[rec.id]) {
-            recScores[rec.id] = 0;
-            recData[rec.id] = rec;
-          }
-          recScores[rec.id] += 1; // +1 punto per ogni volta che viene suggerito
-          recScores[rec.id] += (rec.vote_average / 10); // Bonus qualità (voti alti TMDB)
+          if (!recScores[rec.id]) { recScores[rec.id] = 0; recData[rec.id] = rec; }
+          recScores[rec.id] += 1 + (rec.vote_average / 10); 
         });
 
         const knownIds = new Set([...continueWatching.map(i => i.id), ...myList.map(i => i.id)]);
-        
-        // 4. Filtro e Ordinamento Finale
         const finalRecs = Object.values(recData)
-          .filter(rec => !knownIds.has(rec.id)) // Esclude i titoli già visti o in lista
-          .sort((a, b) => recScores[b.id] - recScores[a.id]) // Ordina dal più affine al meno affine
+          .filter(rec => !knownIds.has(rec.id))
+          .sort((a, b) => recScores[b.id] - recScores[a.id])
           .slice(0, 12); 
 
-        // Paracadute di emergenza se TMDB non ha raccomandazioni specifiche
         if (finalRecs.length < 3) {
            const topGenre = seedItems[0].genre_ids?.[0];
            const fallback = await fetch(`https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&with_genres=${topGenre}`).then(r => r.json());
-           setRecommendations(fallback.results.filter(m => !knownIds.has(m.id)).slice(0, 10));
+           setRecommendations(fallback.results ? fallback.results.filter(m => !knownIds.has(m.id)).slice(0, 10) : []);
         } else {
            setRecommendations(finalRecs);
         }
-
-      } catch(e) {}
+      } catch(e) { setRecommendations([]); }
     };
     buildAdvancedRecommendations();
   }, [historyIds, listIds, activeProfile, mediaType]);
@@ -322,8 +306,10 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
+      // Assicuriamoci che il dominio sia solido per evitare ERR_NAME_NOT_RESOLVED
+      const safeDomain = streamingDomain && streamingDomain.startsWith('http') ? streamingDomain : 'https://cineblog001.bar';
       const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
-      const searchUrl = `${streamingDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanTitle)}`;
+      const searchUrl = `${safeDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanTitle)}`;
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
@@ -351,12 +337,16 @@ export default function App() {
         fetch(topUrl).then(res => res.json()),
       ]);
 
-      const top7 = trending.results.slice(0, 7);
-      setHeroItems(top7);
-      setActiveHeroIndex(0);
-      if (top7[0]) { fetchTrailer(top7[0].id, mediaType); }
-      
-      setSections({ trending: trending.results.slice(7, 20), pop: pop.results, top: top.results, searchResults: [] });
+      if (trending.results && trending.results.length > 0) {
+        const top7 = trending.results.slice(0, 7);
+        setHeroItems(top7);
+        setActiveHeroIndex(0);
+        if (top7[0]) fetchTrailer(top7[0].id, mediaType); 
+        setSections({ trending: trending.results.slice(7, 20), pop: pop.results || [], top: top.results || [], searchResults: [] });
+      } else {
+        setHeroItems([]);
+        setSections({ trending: [], pop: [], top: [], searchResults: [] });
+      }
       setLoading(false);
     } catch (e) { setLoading(false); }
   };
@@ -556,8 +546,8 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent={true} />
       
       {updateData && (
         <Modal transparent={true} animationType="fade" visible={!!updateData}>
@@ -577,26 +567,27 @@ export default function App() {
         </Modal>
       )}
 
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}} hasTVPreferredFocus={view !== 'search'}>
-          <Text style={styles.logo}>NETCHILL</Text>
-        </TouchableOpacity>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TextInput style={[styles.searchBar, { width: 150, marginRight: 15 }]} placeholder="Cerca..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} onSubmitEditing={handleSearch} />
-          <TouchableOpacity onPress={() => setActiveProfile(null)} style={{ width: 35, height: 35, borderRadius: 5, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }}>
-            <Text style={{ fontSize: 20 }}>{activeProfile.avatar}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
+      {/* 🔴 HEADER TRASPARENTE FLUTTUANTE (Effetto Premium) 🔴 */}
       {!targetUrl && (
-        <View>
+        <View style={styles.floatingHeader}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 15 }}>
+            <TouchableOpacity onPress={() => {setView('home'); setSelectedGenre(null); fetchHomeData();}}>
+              <Text style={styles.logo}>NETCHILL</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TextInput style={[styles.searchBar, { width: 130, marginRight: 15 }]} placeholder="Cerca..." placeholderTextColor="#ccc" value={searchQuery} onChangeText={setSearchQuery} onSubmitEditing={handleSearch} />
+              <TouchableOpacity onPress={() => setActiveProfile(null)} style={{ width: 35, height: 35, borderRadius: 5, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ fontSize: 20 }}>{activeProfile.avatar}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <View style={styles.mediaToggleContainer}>
             <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'movie' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('movie'); setSelectedGenre(null); }}>
               <Text style={[styles.mediaToggleText, mediaType === 'movie' && styles.mediaToggleTextActive]}>🎬 FILM</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'tv' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('tv'); setSelectedGenre(null); }}>
-              <Text style={[styles.mediaToggleText, mediaType === 'tv' && styles.mediaToggleTextActive]}>📺 SERIE TV</Text>
+              <Text style={[styles.mediaToggleText, mediaType === 'tv' && styles.mediaToggleTextActive]}>📺 SERIE</Text>
             </TouchableOpacity>
           </View>
 
@@ -616,16 +607,12 @@ export default function App() {
         <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
           {view === 'home' ? (
             <>
+              {/* 🔴 CAROSELLO GIGANTE (60% dell'altezza schermo) 🔴 */}
               {heroItems.length > 0 && !loading && (
                 <View style={styles.heroContainer}>
-                  <ScrollView
-                    horizontal
-                    pagingEnabled
-                    showsHorizontalScrollIndicator={false}
-                    onMomentumScrollEnd={handleHeroScroll}
-                  >
+                  <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={handleHeroScroll}>
                     {heroItems.map((item, index) => (
-                      <View key={item.id} style={{ width: screenWidth, height: 450, backgroundColor: '#000' }}>
+                      <View key={item.id} style={{ width: screenWidth, height: screenHeight * 0.65, backgroundColor: '#000' }}>
                         
                         <Image source={{ uri: BACKDROP_URL + item.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer && activeHeroIndex === index ? 0 : 1 }]} />
                         
@@ -636,13 +623,13 @@ export default function App() {
                               style={{ flex: 1, backgroundColor: 'black' }}
                               javaScriptEnabled={true} domStorageEnabled={true} allowsInlineMediaPlayback={true} mediaPlaybackRequiresUserAction={false}
                               source={{ uri: `https://m.youtube.com/watch?v=${trailerKey}` }}
-                              injectedJavaScript={ytInject}
-                              injectedJavaScriptForMainFrameOnly={false}
+                              injectedJavaScript={ytInject} injectedJavaScriptForMainFrameOnly={false}
                             />
                           </View>
                         )}
 
-                        <View style={[styles.heroOverlay, { backgroundColor: showTrailer && activeHeroIndex === index ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.6)' }]}>
+                        {/* Sfumatura nera in basso per fondere il carosello con i film sotto */}
+                        <View style={styles.heroGradient}>
                           <Text style={styles.heroTitle}>{item.title || item.name}</Text>
                           <View style={{flexDirection: 'row', alignItems: 'center'}}>
                             <TouchableOpacity style={styles.playBtn} onPress={() => startPlaying(item)}>
@@ -671,7 +658,7 @@ export default function App() {
                 </View>
               )}
               
-              {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 50}} /> : (
+              {loading ? <ActivityIndicator color="#E50914" style={{marginTop: 150}} /> : (
                 <View style={styles.content}>
                   {filteredHistory.length > 0 && !selectedGenre && (
                     <Row title={`Continua a guardare, ${activeProfile.name}`} data={filteredHistory} onPlay={(i) => startPlaying(i, true)} isHistory myList={myList} onToggleList={toggleMyList} />
@@ -682,14 +669,21 @@ export default function App() {
                   {filteredMyList.length > 0 && !selectedGenre && (
                     <Row title="La mia Lista" data={filteredMyList} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
                   )}
-                  <Row title={selectedGenre ? "I migliori della categoria" : "Tendenze della settimana"} data={sections.trending} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
-                  <Row title={mediaType === 'movie' ? "Film Consigliati" : "Serie TV Consigliate"} data={sections.pop} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
-                  <Row title="I Più Votati" data={sections.top} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  {sections.trending && sections.trending.length > 0 && (
+                     <Row title={selectedGenre ? "I migliori della categoria" : "Tendenze della settimana"} data={sections.trending} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  )}
+                  {sections.pop && sections.pop.length > 0 && (
+                     <Row title={mediaType === 'movie' ? "Film Consigliati" : "Serie TV Consigliate"} data={sections.pop} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  )}
+                  {sections.top && sections.top.length > 0 && (
+                     <Row title="I Più Votati" data={sections.top} onPlay={startPlaying} myList={myList} onToggleList={toggleMyList} />
+                  )}
                 </View>
               )}
             </>
           ) : (
             <View style={styles.searchGrid}>
+              <View style={{height: 150}} /> {/* Spazio per l'header trasparente */}
               <Text style={styles.rowTitle}>Risultati per: {searchQuery}</Text>
               <View style={styles.grid}>
                 {sections.searchResults.map(m => (
@@ -700,7 +694,7 @@ export default function App() {
           )}
         </ScrollView>
       ) : (
-        <View style={{flex: 1}}>
+        <SafeAreaView style={{flex: 1, backgroundColor: '#000'}}>
           <View style={styles.browserBar}>
             <TouchableOpacity onPress={() => { if (webViewRef.current) webViewRef.current.goBack(); }} hasTVPreferredFocus={true}>
               <Text style={styles.barLink}>← INDIETRO</Text>
@@ -749,9 +743,9 @@ export default function App() {
               }}
             />
           </View>
-        </View>
+        </SafeAreaView>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -792,41 +786,52 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   splash: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   splashLetter: { color: '#E50914', fontSize: 50, fontWeight: '900', marginHorizontal: -1 }, 
-  header: { padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  logo: { color: '#E50914', fontSize: 26, fontWeight: 'bold', letterSpacing: -1 },
-  searchBar: { backgroundColor: '#1A1A1A', color: 'white', padding: 10, borderRadius: 20, paddingHorizontal: 15 },
-  mediaToggleContainer: { flexDirection: 'row', paddingHorizontal: 15, marginBottom: 15, marginTop: -5 },
-  mediaToggleBtn: { flex: 1, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: '#333', alignItems: 'center' },
-  mediaToggleBtnActive: { borderBottomColor: '#E50914' },
-  mediaToggleText: { color: '#666', fontWeight: 'bold', fontSize: 16 },
+  
+  // HEADER FLUTTUANTE
+  floatingHeader: { position: 'absolute', top: 0, width: '100%', zIndex: 100, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 40, backgroundColor: 'rgba(0,0,0,0.6)' },
+  logo: { color: '#E50914', fontSize: 28, fontWeight: '900', letterSpacing: -1, textShadowColor: 'black', textShadowRadius: 10 },
+  searchBar: { backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', padding: 8, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  
+  mediaToggleContainer: { flexDirection: 'row', paddingHorizontal: 15, marginTop: 15, marginBottom: 10 },
+  mediaToggleBtn: { marginRight: 20, paddingBottom: 5 },
+  mediaToggleBtnActive: { borderBottomWidth: 2, borderBottomColor: '#E50914' },
+  mediaToggleText: { color: '#aaa', fontWeight: 'bold', fontSize: 16, textShadowColor: 'black', textShadowRadius: 5 },
   mediaToggleTextActive: { color: 'white' },
-  catBar: { marginBottom: 15, paddingLeft: 10 },
-  catTab: { paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, marginRight: 10, backgroundColor: '#111' },
-  catActive: { backgroundColor: '#E50914' },
-  catText: { color: '#666', fontWeight: 'bold', fontSize: 13 },
-  heroContainer: { width: '100%', height: 450, backgroundColor: '#000' },
-  heroOverlay: { height: '100%', justifyContent: 'flex-end', padding: 30, alignItems: 'center' },
-  heroTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', textAlign: 'center', marginBottom: 20 },
-  dotsContainer: { flexDirection: 'row', position: 'absolute', bottom: 10, alignSelf: 'center' },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)', marginHorizontal: 4 },
+  
+  catBar: { paddingLeft: 10, paddingBottom: 15 },
+  catTab: { paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, marginRight: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  catActive: { backgroundColor: '#E50914', borderColor: '#E50914' },
+  catText: { color: '#ddd', fontWeight: 'bold', fontSize: 13 },
+  
+  // HERO CAROUSEL
+  heroContainer: { width: '100%', backgroundColor: '#000' },
+  heroGradient: { height: '100%', justifyContent: 'flex-end', padding: 30, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', borderBottomWidth: 50, borderBottomColor: 'rgba(0,0,0,0.8)' },
+  heroTitle: { color: 'white', fontSize: 36, fontWeight: '900', textAlign: 'center', marginBottom: 20, textShadowColor: 'black', textShadowRadius: 15 },
+  dotsContainer: { flexDirection: 'row', position: 'absolute', bottom: 15, alignSelf: 'center' },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 4 },
   activeDot: { backgroundColor: 'white', width: 8, height: 8, borderRadius: 4, transform: [{translateY: -1}] },
+  
   playBtn: { backgroundColor: 'white', paddingVertical: 12, paddingHorizontal: 40, borderRadius: 5, marginRight: 10 },
   playBtnText: { color: 'black', fontWeight: 'bold', fontSize: 16 },
-  heroAddBtn: { backgroundColor: 'rgba(50,50,50,0.8)', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 5, justifyContent: 'center' },
+  heroAddBtn: { backgroundColor: 'rgba(50,50,50,0.8)', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 5, justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   heroAddBtnText: { color: 'white', fontWeight: 'bold', fontSize: 18 },
   muteBtn: { position: 'absolute', bottom: 30, right: 20, backgroundColor: 'rgba(0,0,0,0.6)', width: 45, height: 45, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
-  rowTitle: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 15, marginBottom: 15 },
+  
+  content: { paddingTop: 20 }, // Spazio dopo il carosello
+  rowTitle: { color: 'white', fontSize: 20, fontWeight: 'bold', marginLeft: 15, marginBottom: 15, letterSpacing: -0.5 },
   card: { marginLeft: 15, width: 130 },
-  cardImg: { width: 130, height: 195, borderRadius: 10, backgroundColor: '#111' },
+  cardImg: { width: 130, height: 195, borderRadius: 8, backgroundColor: '#111' },
   overlayAddBtn: { position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.7)', width: 25, height: 25, borderRadius: 15, justifyContent: 'center', alignItems: 'center', zIndex: 10 },
-  progressContainer: { height: 4, width: '100%', backgroundColor: '#333', borderBottomLeftRadius: 10, borderBottomRightRadius: 10, overflow: 'hidden' },
+  progressContainer: { height: 4, width: '100%', backgroundColor: '#333', borderBottomLeftRadius: 8, borderBottomRightRadius: 8, overflow: 'hidden' },
   progressBar: { height: '100%', backgroundColor: '#E50914' },
-  cardTitle: { color: '#666', fontSize: 11, marginTop: 8, textAlign: 'center' },
+  cardTitle: { color: '#888', fontSize: 12, marginTop: 8, textAlign: 'center', fontWeight: '500' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
   searchGrid: { padding: 10 },
+  
   browserBar: { backgroundColor: '#111', padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   barLink: { color: '#E50914', fontWeight: 'bold', fontSize: 12 },
   barTitle: { color: '#444', fontSize: 10, fontWeight: 'bold' },
+  
   updateModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   updateBox: { backgroundColor: '#141414', padding: 40, borderRadius: 15, alignItems: 'center', width: '100%', maxWidth: 450, borderWidth: 1, borderColor: '#333' },
   updateTitle: { color: 'white', fontSize: 24, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
