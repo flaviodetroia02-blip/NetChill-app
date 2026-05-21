@@ -2,7 +2,7 @@
   "expo": {
     "name": "NetChill",
     "slug": "app-streaming",
-    "version": "28.0.0",
+    "version": "35.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "appstreaming",
@@ -21,7 +21,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.flazzo.appstreaming",
-      "versionCode": 28
+      "versionCode": 35
     },
     "web": {
       "output": "static",
