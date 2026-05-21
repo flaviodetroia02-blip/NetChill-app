@@ -10,8 +10,8 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 36 - FIX SCHERMO NERO SERIE TV
-const APP_VERSION_CODE = 36; 
+// VERSIONE 37 - FIX PLAYER VIDEO SERIE TV (IFRAME ANNIDATI)
+const APP_VERSION_CODE = 37; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -526,8 +526,11 @@ export default function App() {
       function attachToVideo(v) {
         if (!v || v.dataset.hooked) return;
         v.dataset.hooked = "true"; 
-        
-        if (!isMainSite) { v.play().catch(e=>{}); }
+
+        if (!isMainSite) {
+          v.muted = false;
+          v.play().catch(e=>{});
+        }
 
         const trySeek = () => {
           if (!hasSeeked && v.readyState >= 1) {
@@ -539,6 +542,7 @@ export default function App() {
           }
         };
         v.addEventListener('loadedmetadata', trySeek);
+        v.addEventListener('canplay', () => { trySeek(); v.play().catch(e=>{}); });
         v.addEventListener('playing', trySeek);
         
         setInterval(() => {
@@ -556,7 +560,26 @@ export default function App() {
           }
         }, 1000);
       }
-      setInterval(() => { document.querySelectorAll('video').forEach(attachToVideo); }, 1000);
+
+      // --- FIX 4: cerca video anche dentro gli iframe annidati ---
+      // I player delle serie TV sono spesso iframe dentro iframe
+      setInterval(() => {
+        document.querySelectorAll('video').forEach(attachToVideo);
+        document.querySelectorAll('iframe').forEach(frame => {
+          try {
+            if (frame.contentDocument) {
+              frame.contentDocument.querySelectorAll('video').forEach(attachToVideo);
+              frame.contentDocument.querySelectorAll('iframe').forEach(innerFrame => {
+                try {
+                  if (innerFrame.contentDocument) {
+                    innerFrame.contentDocument.querySelectorAll('video').forEach(attachToVideo);
+                  }
+                } catch(e) {}
+              });
+            }
+          } catch(e) {}
+        });
+      }, 500);
     })();
     true;
   `;
