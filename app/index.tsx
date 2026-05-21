@@ -10,8 +10,8 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 37 - FIX PLAYER VIDEO SERIE TV (IFRAME ANNIDATI)
-const APP_VERSION_CODE = 37; 
+// VERSIONE 40 - SBLOCCO DOMINI ESTERNI E FIX DEFINITIVO SERIE TV
+const APP_VERSION_CODE = 40; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -68,11 +68,8 @@ export default function App() {
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
-  // --- FIX 3: ref separata per il progress di riproduzione ---
-  // Evita il problema di currentMovie stale nel dynamicJS al primo render
   const playProgressRef = useRef(0);
 
-  // --- ANIMAZIONI SPLASH SCREEN ---
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
   const glowAnim = useRef(new Animated.Value(0)).current; 
@@ -313,8 +310,6 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
-      // --- FIX 3: aggiorna la ref del progress PRIMA di navigare ---
-      // così dynamicJS legge sempre il valore corretto anche al primo render
       playProgressRef.current = progressToSave;
 
       const safeDomain = streamingDomain && streamingDomain.startsWith('http') ? streamingDomain : 'https://cineblog001.bar';
@@ -323,8 +318,6 @@ export default function App() {
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
-      // --- FIX 1: rimosso setTimeout che causava conflitti con onLoadStart/onLoadEnd ---
-      // Lo spinner viene ora gestito esclusivamente dagli eventi del WebView
       setIsWebViewLoading(true);
 
     } catch (e) {}
@@ -440,27 +433,11 @@ export default function App() {
               display: inline-block !important; background-color: #333 !important; color: white !important; padding: 12px 20px !important; border-radius: 6px !important; text-decoration: none !important; font-weight: bold !important; font-size: 14px !important; text-align: center !important;
           }
 
-          /* --- FIX 2: CSS IFRAME PLAYER CORRETTO ---                      */
-          /* Non tocchiamo gli iframe video con src esterno (player reali)   */
-          /* Applichiamo dimensioni solo ai wrapper generici della pagina     */
-          .video-container, div[id*="player"], div[class*="player"] {
+          /* IFRAME: Forzati in primo piano per evitare schermi neri */
+          iframe, .video-container, div[id*="player"], div[class*="player"] {
             width: 100% !important;
             max-width: 900px !important;
-            min-height: 200px !important;
-            aspect-ratio: 16 / 9 !important;
-            border-radius: 10px !important;
-            margin: 20px 0 !important;
-            background-color: #111 !important;
-          }
-          /* Iframe dei player video veri (embed, stream, ecc.) */
-          iframe[src*="player"],
-          iframe[src*="embed"],
-          iframe[src*="stream"],
-          iframe[src*="watch"],
-          iframe[src*="video"],
-          iframe#iFrameResizer0 {
-            width: 100% !important;
-            min-height: 220px !important;
+            min-height: 250px !important;
             aspect-ratio: 16 / 9 !important;
             height: auto !important;
             border: none !important;
@@ -469,16 +446,8 @@ export default function App() {
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
-          }
-          /* Iframe generici senza src riconoscibile: dimensioni sicure */
-          iframe:not([src*="player"]):not([src*="embed"]):not([src*="stream"]):not([src*="watch"]):not([src*="video"]):not([id="iFrameResizer0"]) {
-            width: 100% !important;
-            min-height: 200px !important;
-            aspect-ratio: 16 / 9 !important;
-            height: auto !important;
-            border: none !important;
-            border-radius: 10px !important;
-            margin: 20px 0 !important;
+            background-color: #111 !important;
+            z-index: 9999 !important;
           }
         \`;
         document.documentElement.appendChild(tvStyle); 
@@ -491,10 +460,11 @@ export default function App() {
         }, true);
 
         setInterval(() => {
+          // Nasconde banner ma preserva l'iframe e il video
           document.querySelectorAll('img').forEach(img => {
               let src = (img.src || '').toLowerCase();
               let alt = (img.alt || '').toLowerCase();
-              if (src.includes('download') || src.includes('4k') || src.includes('streaming') || src.includes('banner') || alt.includes('download') || alt.includes('4k')) {
+              if (src.includes('download') || src.includes('4k') || src.includes('banner') || alt.includes('download') || alt.includes('4k')) {
                   img.style.display = 'none';
                   if(img.parentElement && img.parentElement.tagName === 'A') {
                       img.parentElement.style.display = 'none';
@@ -502,6 +472,7 @@ export default function App() {
               }
           });
 
+          // Uccide elementi ingannevoli
           document.querySelectorAll('a, p, span, b, strong').forEach(el => {
             const txt = (el.textContent || '').toLowerCase();
             if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis') || txt.includes('l\\'indirizzo ufficiale') || txt.includes('cerca su cb01') || txt.includes('risultati di ricerca')) {
@@ -511,15 +482,12 @@ export default function App() {
         }, 500);
       }
 
-      // PONTE RADIO E PLAYER (Sempre Attivo)
       window.addEventListener('message', function(e) {
         if (e.data && e.data.type === 'TIME_UPDATE') {
           try { window.ReactNativeWebView.postMessage(JSON.stringify(e.data)); } catch(err){}
         }
       });
 
-      // --- FIX 3: usa playProgressRef.current invece di currentMovie?.progress ---
-      // In questo modo il valore è sempre aggiornato prima che il WebView si monti
       let initialSavedTime = parseFloat("${playProgressRef.current || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
@@ -561,21 +529,12 @@ export default function App() {
         }, 1000);
       }
 
-      // --- FIX 4: cerca video anche dentro gli iframe annidati ---
-      // I player delle serie TV sono spesso iframe dentro iframe
       setInterval(() => {
         document.querySelectorAll('video').forEach(attachToVideo);
         document.querySelectorAll('iframe').forEach(frame => {
           try {
             if (frame.contentDocument) {
               frame.contentDocument.querySelectorAll('video').forEach(attachToVideo);
-              frame.contentDocument.querySelectorAll('iframe').forEach(innerFrame => {
-                try {
-                  if (innerFrame.contentDocument) {
-                    innerFrame.contentDocument.querySelectorAll('video').forEach(attachToVideo);
-                  }
-                } catch(e) {}
-              });
             }
           } catch(e) {}
         });
@@ -813,14 +772,15 @@ export default function App() {
 
             <WebView 
               ref={webViewRef}
-              // --- FIX 1: gestione corretta dello spinner ---
-              // onLoadStart/onLoadEnd/onError/onHttpError sono le uniche sorgenti
-              // di verità per lo stato di caricamento. Nessun setTimeout.
+              // 🔴 IL FIX DECISIVO PER LE SERIE TV 🔴
+              originWhitelist={['*']}
+              setSupportMultipleWindows={false}
+              mixedContentMode="always"
+              
               onLoadStart={() => setIsWebViewLoading(true)}
               onLoadEnd={() => setIsWebViewLoading(false)}
               onError={() => setIsWebViewLoading(false)}
               onHttpError={() => setIsWebViewLoading(false)}
-              mixedContentMode="always"
               source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
               userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
               sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} 
