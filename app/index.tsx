@@ -10,8 +10,8 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 40 - SBLOCCO DOMINI ESTERNI E FIX DEFINITIVO SERIE TV
-const APP_VERSION_CODE = 40; 
+// VERSIONE 38 - FIX SERIE TV VISIBILI + BLOCCO PUBBLICITÀ
+const APP_VERSION_CODE = 38; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -68,8 +68,11 @@ export default function App() {
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
+  // --- FIX 3: ref separata per il progress di riproduzione ---
+  // Evita il problema di currentMovie stale nel dynamicJS al primo render
   const playProgressRef = useRef(0);
 
+  // --- ANIMAZIONI SPLASH SCREEN ---
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
   const glowAnim = useRef(new Animated.Value(0)).current; 
@@ -310,6 +313,8 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
+      // --- FIX 3: aggiorna la ref del progress PRIMA di navigare ---
+      // così dynamicJS legge sempre il valore corretto anche al primo render
       playProgressRef.current = progressToSave;
 
       const safeDomain = streamingDomain && streamingDomain.startsWith('http') ? streamingDomain : 'https://cineblog001.bar';
@@ -318,6 +323,8 @@ export default function App() {
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
+      // --- FIX 1: rimosso setTimeout che causava conflitti con onLoadStart/onLoadEnd ---
+      // Lo spinner viene ora gestito esclusivamente dagli eventi del WebView
       setIsWebViewLoading(true);
 
     } catch (e) {}
@@ -409,35 +416,165 @@ export default function App() {
     (function() {
       const isMainSite = window.location.hostname.includes('cineblog') || window.location.hostname.includes('cb01') || window.location.hostname.includes('${streamingDomain.replace('https://', '')}');
 
+      // --- BLOCCO PUBBLICITÀ GLOBALE (attivo su tutte le pagine) ---
+      // Blocca window.open usato dalle pubblicità per aprire nuove schede
+      window.open = function() { return null; };
+      window.alert = function() {};
+      window.confirm = function() { return false; };
+
+      // Blocca tutti i link che aprono nuove schede
+      document.addEventListener('click', function(e) {
+        let target = e.target.closest('a');
+        if (target && target.target === '_blank') {
+          target.target = '_self';
+        }
+      }, true);
+
+      // Rimuove overlay pubblicitari e popup ogni 300ms
+      setInterval(() => {
+        // Chiude popup e overlay
+        const popupSelectors = [
+          'div[class*="popup"]', 'div[class*="overlay"]', 'div[class*="modal"]',
+          'div[id*="popup"]', 'div[id*="overlay"]', 'div[id*="modal"]',
+          'div[class*="advert"]', 'div[class*="banner"]', 'div[id*="advert"]',
+          'div[style*="position: fixed"]', 'div[style*="position:fixed"]',
+          'div[style*="z-index: 9"]', 'div[style*="z-index:9"]'
+        ];
+        popupSelectors.forEach(sel => {
+          try {
+            document.querySelectorAll(sel).forEach(el => {
+              // Non rimuovere elementi che contengono video o iframe del player
+              if (!el.querySelector('video') && !el.querySelector('iframe')) {
+                el.remove();
+              }
+            });
+          } catch(e) {}
+        });
+
+        // Clicca automaticamente pulsanti skip/chiudi pubblicità
+        document.querySelectorAll('button, a, span, div').forEach(btn => {
+          const txt = (btn.textContent || '').toLowerCase().trim();
+          const cls = (btn.className || '').toLowerCase();
+          if (
+            txt === 'skip' || txt === 'skip ad' || txt === 'salta' ||
+            txt === 'salta annuncio' || txt === 'close' || txt === 'chiudi' ||
+            txt === '×' || txt === 'x' ||
+            cls.includes('skip') || cls.includes('close-btn') || cls.includes('dismiss')
+          ) {
+            try { btn.click(); } catch(e) {}
+          }
+        });
+
+        // Ripristina lo scroll se bloccato dalle pubblicità
+        if (document.body.style.overflow === 'hidden') {
+          document.body.style.overflow = '';
+        }
+      }, 300);
+
       if (isMainSite) {
         const tvStyle = document.createElement('style');
         tvStyle.innerHTML = \`
-          html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-          header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb, form, .speedbar, .berrors { 
-            display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
-          }
-          #dle-content, main, .content, article { 
-            width: 100vw !important; max-width: 100% !important; padding: 15px !important; margin: 0 auto !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; align-items: center !important;
-          }
-          
-          .short { margin-bottom: 30px !important; text-align: center !important; width: 100% !important; max-width: 500px !important; background: #111 !important; padding: 15px !important; border-radius: 12px !important; }
-          .short img { transform: scale(1.05) !important; border-radius: 8px !important; margin-bottom: 15px !important; max-width: 100% !important; height: auto !important; }
-          .story-heading { font-size: 24px !important; margin-top: 15px !important; font-family: sans-serif !important; text-align: center; }
-          .story-heading a { color: #ffffff !important; text-decoration: none !important; }
-          
-          /* STILE PREMIUM PER LE SERIE TV */
-          .su-spoiler { margin-bottom: 12px !important; width: 100% !important; max-width: 600px !important; border-radius: 8px !important; overflow: hidden !important; }
-          .su-spoiler-title { background-color: #1A1A1A !important; color: #E50914 !important; padding: 18px !important; font-weight: bold !important; font-size: 18px !important; border: 1px solid #333 !important; text-align: center !important; }
-          .su-spoiler-content { background-color: #0A0A0A !important; padding: 15px !important; display: flex !important; flex-wrap: wrap !important; justify-content: center !important; gap: 10px !important; }
-          .su-spoiler-content a, .content a[target="_blank"] { 
-              display: inline-block !important; background-color: #333 !important; color: white !important; padding: 12px 20px !important; border-radius: 6px !important; text-decoration: none !important; font-weight: bold !important; font-size: 14px !important; text-align: center !important;
+          html, body { 
+            background-color: #000000 !important; 
+            color: #ffffff !important; 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            overflow-x: hidden !important; 
           }
 
-          /* IFRAME: Forzati in primo piano per evitare schermi neri */
-          iframe, .video-container, div[id*="player"], div[class*="player"] {
+          /* --- NASCONDI SOLO HEADER/FOOTER/PUB, NON IL CONTENUTO --- */
+          /* Prima era troppo aggressivo e nascondeva anche i pulsanti delle serie */
+          #header, .top-header, .mobile-header, footer, 
+          .social-share, .speedbar, .berrors,
+          [class*="adsbygoogle"], [id*="adsbygoogle"] {
+            display: none !important;
+          }
+
+          /* Sidebar visibile ma riposizionata */
+          #sidebar, .sidebar, .widget-area { 
+            display: none !important; 
+          }
+
+          /* Contenuto principale centrato */
+          #dle-content, main, .content, article { 
+            width: 100vw !important; 
+            max-width: 100% !important; 
+            padding: 15px !important; 
+            margin: 0 auto !important; 
+            box-sizing: border-box !important; 
+            display: flex !important; 
+            flex-direction: column !important; 
+            align-items: center !important;
+          }
+
+          /* Card film/serie nei risultati ricerca */
+          .short { 
+            margin-bottom: 30px !important; text-align: center !important; 
+            width: 100% !important; max-width: 500px !important; 
+            background: #111 !important; padding: 15px !important; 
+            border-radius: 12px !important; 
+          }
+          .short img { 
+            border-radius: 8px !important; margin-bottom: 15px !important; 
+            max-width: 100% !important; height: auto !important; 
+          }
+          .story-heading { 
+            font-size: 24px !important; margin-top: 15px !important; 
+            font-family: sans-serif !important; text-align: center; 
+          }
+          .story-heading a { color: #ffffff !important; text-decoration: none !important; }
+
+          /* --- STILE SERIE TV: stagioni e episodi --- */
+          .su-spoiler { 
+            margin-bottom: 12px !important; width: 100% !important; 
+            max-width: 600px !important; border-radius: 8px !important; 
+            overflow: visible !important; 
+          }
+          .su-spoiler-title { 
+            background-color: #1A1A1A !important; color: #E50914 !important; 
+            padding: 18px !important; font-weight: bold !important; 
+            font-size: 18px !important; border: 1px solid #333 !important; 
+            text-align: center !important; cursor: pointer !important;
+            display: block !important; visibility: visible !important;
+            opacity: 1 !important;
+          }
+          .su-spoiler-content { 
+            background-color: #0A0A0A !important; padding: 15px !important; 
+            display: flex !important; flex-wrap: wrap !important; 
+            justify-content: center !important; gap: 10px !important; 
+          }
+          /* Pulsanti episodi — DEVONO essere visibili */
+          .su-spoiler-content a,
+          .content a[target="_blank"],
+          .content a {
+            display: inline-block !important; 
+            background-color: #E50914 !important; 
+            color: white !important; 
+            padding: 12px 20px !important; 
+            border-radius: 6px !important; 
+            text-decoration: none !important; 
+            font-weight: bold !important; 
+            font-size: 14px !important; 
+            text-align: center !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+          }
+
+          /* --- PLAYER VIDEO --- */
+          .video-container, div[id*="player"], div[class*="player"] {
             width: 100% !important;
             max-width: 900px !important;
-            min-height: 250px !important;
+            min-height: 200px !important;
+            aspect-ratio: 16 / 9 !important;
+            border-radius: 10px !important;
+            margin: 20px 0 !important;
+            background-color: #111 !important;
+          }
+          iframe[src*="player"], iframe[src*="embed"],
+          iframe[src*="stream"], iframe[src*="watch"],
+          iframe[src*="video"], iframe#iFrameResizer0 {
+            width: 100% !important;
+            min-height: 220px !important;
             aspect-ratio: 16 / 9 !important;
             height: auto !important;
             border: none !important;
@@ -446,48 +583,49 @@ export default function App() {
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
-            background-color: #111 !important;
-            z-index: 9999 !important;
+          }
+          iframe:not([src*="player"]):not([src*="embed"]):not([src*="stream"]):not([src*="watch"]):not([src*="video"]):not([id="iFrameResizer0"]) {
+            width: 100% !important;
+            min-height: 200px !important;
+            aspect-ratio: 16 / 9 !important;
+            height: auto !important;
+            border: none !important;
+            border-radius: 10px !important;
+            margin: 20px 0 !important;
           }
         \`;
-        document.documentElement.appendChild(tvStyle); 
+        document.documentElement.appendChild(tvStyle);
 
-        document.addEventListener('click', function(e) {
-          let target = e.target.closest('a');
-          if (target && target.target === '_blank') {
-            target.target = '_self';
-          }
-        }, true);
-
+        // Nascondi immagini pubblicitarie
         setInterval(() => {
-          // Nasconde banner ma preserva l'iframe e il video
           document.querySelectorAll('img').forEach(img => {
-              let src = (img.src || '').toLowerCase();
-              let alt = (img.alt || '').toLowerCase();
-              if (src.includes('download') || src.includes('4k') || src.includes('banner') || alt.includes('download') || alt.includes('4k')) {
-                  img.style.display = 'none';
-                  if(img.parentElement && img.parentElement.tagName === 'A') {
-                      img.parentElement.style.display = 'none';
-                  }
+            let src = (img.src || '').toLowerCase();
+            let alt = (img.alt || '').toLowerCase();
+            if (src.includes('download') || src.includes('4k') || src.includes('banner') || alt.includes('download') || alt.includes('4k')) {
+              img.style.display = 'none';
+              if (img.parentElement && img.parentElement.tagName === 'A') {
+                img.parentElement.style.display = 'none';
               }
+            }
           });
-
-          // Uccide elementi ingannevoli
           document.querySelectorAll('a, p, span, b, strong').forEach(el => {
             const txt = (el.textContent || '').toLowerCase();
-            if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis') || txt.includes('l\\'indirizzo ufficiale') || txt.includes('cerca su cb01') || txt.includes('risultati di ricerca')) {
+            if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis') || txt.includes('l\\'indirizzo ufficiale') || txt.includes('cerca su cb01')) {
               el.style.display = 'none';
             }
           });
         }, 500);
       }
 
+      // PONTE RADIO E PLAYER (Sempre Attivo)
       window.addEventListener('message', function(e) {
         if (e.data && e.data.type === 'TIME_UPDATE') {
           try { window.ReactNativeWebView.postMessage(JSON.stringify(e.data)); } catch(err){}
         }
       });
 
+      // --- FIX 3: usa playProgressRef.current invece di currentMovie?.progress ---
+      // In questo modo il valore è sempre aggiornato prima che il WebView si monti
       let initialSavedTime = parseFloat("${playProgressRef.current || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
@@ -529,12 +667,21 @@ export default function App() {
         }, 1000);
       }
 
+      // --- FIX 4: cerca video anche dentro gli iframe annidati ---
+      // I player delle serie TV sono spesso iframe dentro iframe
       setInterval(() => {
         document.querySelectorAll('video').forEach(attachToVideo);
         document.querySelectorAll('iframe').forEach(frame => {
           try {
             if (frame.contentDocument) {
               frame.contentDocument.querySelectorAll('video').forEach(attachToVideo);
+              frame.contentDocument.querySelectorAll('iframe').forEach(innerFrame => {
+                try {
+                  if (innerFrame.contentDocument) {
+                    innerFrame.contentDocument.querySelectorAll('video').forEach(attachToVideo);
+                  }
+                } catch(e) {}
+              });
             }
           } catch(e) {}
         });
@@ -772,15 +919,14 @@ export default function App() {
 
             <WebView 
               ref={webViewRef}
-              // 🔴 IL FIX DECISIVO PER LE SERIE TV 🔴
-              originWhitelist={['*']}
-              setSupportMultipleWindows={false}
-              mixedContentMode="always"
-              
+              // --- FIX 1: gestione corretta dello spinner ---
+              // onLoadStart/onLoadEnd/onError/onHttpError sono le uniche sorgenti
+              // di verità per lo stato di caricamento. Nessun setTimeout.
               onLoadStart={() => setIsWebViewLoading(true)}
               onLoadEnd={() => setIsWebViewLoading(false)}
               onError={() => setIsWebViewLoading(false)}
               onHttpError={() => setIsWebViewLoading(false)}
+              mixedContentMode="always"
               source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
               userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
               sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} 
