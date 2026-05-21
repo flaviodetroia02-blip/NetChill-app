@@ -10,8 +10,8 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 28 - FIX CARICAMENTO INFINITO, FIX UI OVERLAP, FIX SCRITTE YOUTUBE
-const APP_VERSION_CODE = 28; 
+// VERSIONE 35 - FIX ERRORE GLOWANIM E STABILITÀ GENERALE
+const APP_VERSION_CODE = 35; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -68,6 +68,13 @@ export default function App() {
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
+  // --- ANIMAZIONI SPLASH SCREEN (Re-inserite) ---
+  const splashOpacity = useRef(new Animated.Value(1)).current; 
+  const globalZoom = useRef(new Animated.Value(1)).current; 
+  const glowAnim = useRef(new Animated.Value(0)).current; 
+  const LETTERS = "NETCHILL".split("");
+  const letterAnims = useRef(LETTERS.map(() => new Animated.Value(0))).current;
+
   useEffect(() => { historyRef.current = continueWatching; }, [continueWatching]);
   useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
 
@@ -77,7 +84,7 @@ export default function App() {
   const startTrailerTimer = () => {
     clearTimeout(trailerTimeout.current);
     trailerTimeout.current = setTimeout(() => {
-      if (scrollY.current < 250) { setShowTrailer(true); } // Aumentato tolleranza scroll
+      if (scrollY.current < 250) { setShowTrailer(true); }
     }, 3000); 
   };
 
@@ -178,12 +185,6 @@ export default function App() {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
   }, [targetUrl]);
-
-  const splashOpacity = useRef(new Animated.Value(1)).current; 
-  const globalZoom = useRef(new Animated.Value(1)).current; 
-  const glowAnim = useRef(new Animated.Value(0)).current; 
-  const LETTERS = "NETCHILL".split("");
-  const letterAnims = useRef(LETTERS.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     startCinematicSplash();
@@ -314,10 +315,9 @@ export default function App() {
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
-      
-      // 🔴 FIX CARICAMENTO INFINITO: Timer blindato a 2.5 secondi. Ignoriamo i re-load della WebView.
       setIsWebViewLoading(true);
-      setTimeout(() => { setIsWebViewLoading(false); }, 2500); 
+      // Fallback timer se la pagina fosse lentissima, ma onLoadEnd ora spegnerà lo spinner
+      setTimeout(() => { setIsWebViewLoading(false); }, 4000); 
 
     } catch (e) {}
   };
@@ -326,7 +326,6 @@ export default function App() {
     setLoading(true);
     try {
       const gParam = genreId ? `&with_genres=${genreId}` : '';
-      
       const trendingUrl = genreId 
         ? `https://api.themoviedb.org/3/discover/${mediaType}?api_key=${TMDB_API_KEY}&language=it-IT&sort_by=popularity.desc${gParam}`
         : `https://api.themoviedb.org/3/trending/${mediaType}/week?api_key=${TMDB_API_KEY}&language=it-IT`;
@@ -381,72 +380,98 @@ export default function App() {
     ]).start(() => setShowSplash(false));
   };
 
-  // 🔴 FIX SCRITTE YOUTUBE NUCLEARE 🔴
   const ytInject = `
     (function() {
       window.isAppMuted = true;
       const css = document.createElement('style');
-      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, .ytp-chrome-top, .ytp-chrome-bottom, ytm-player-overlay-renderer, ytm-consent-bump-v2-renderer, .page-container, ytm-item-section-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; }';
-      document.head.appendChild(css);
-      
+      css.id = 'netchill-yt-css';
+      css.innerHTML = 'body { background-color: #000 !important; } ytm-header-bar, ytm-mobile-topbar-renderer, .ytp-chrome-top, .ytp-chrome-bottom, ytm-player-overlay-renderer, ytm-consent-bump-v2-renderer, .page-container, ytm-item-section-renderer, ytm-single-column-watch-next-results-renderer, #page-manager, .ytp-gradient-top, .ytp-gradient-bottom, ytm-bottom-sheet-renderer, .ytp-watermark { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; } video { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; background: #000 !important; pointer-events: none !important; }';
+
       setInterval(() => {
+        if (!document.getElementById('netchill-yt-css')) document.head.appendChild(css);
+        const trashElements = document.querySelectorAll('ytm-single-column-watch-next-results-renderer, ytm-mobile-topbar-renderer, ytm-header-bar, .ytp-chrome-top, .ytp-chrome-bottom, ytm-custom-control, .ytp-unmute');
+        trashElements.forEach(el => el.remove());
         document.querySelectorAll('button').forEach(btn => {
           if ((btn.textContent||'').toLowerCase().includes('accetta')) btn.click();
         });
         var v = document.querySelector('video');
         if (v) {
-          v.muted = window.isAppMuted; 
+          v.muted = window.isAppMuted;
           if (v.paused) v.play().catch(e=>{});
         }
-      }, 500);
+      }, 100); 
     })();
     true;
   `;
 
   const dynamicJS = `
     (function() {
-      const tvStyle = document.createElement('style');
-      tvStyle.innerHTML = \`
-        html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-        header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb, form, center, .speedbar, .berrors { 
-          display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
-        }
-        #dle-content, main, .content, article { 
-          width: 100vw !important; max-width: 100% !important; padding: 20px !important; margin: 0 auto !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; align-items: center !important;
-        }
-        .short { margin-bottom: 40px !important; text-align: center !important; max-width: 600px !important; }
-        .short img { transform: scale(1.1) !important; border-radius: 12px !important; margin-bottom: 15px !important; }
-        .story-heading { font-size: 26px !important; margin-top: 20px !important; font-family: sans-serif !important; }
-        .story-heading a { color: #ffffff !important; text-decoration: none !important; }
-        iframe#iFrameResizer0, iframe, .video-container {
-          width: 100% !important; max-width: 900px !important; aspect-ratio: 16 / 9 !important; height: auto !important; border-radius: 12px !important; border: 2px solid #222 !important; margin-top: 15px !important; box-shadow: 0px 10px 30px rgba(0,0,0,0.8) !important;
-        }
-      \`;
-      document.documentElement.appendChild(tvStyle); 
+      const isMainSite = window.location.hostname.includes('cineblog') || window.location.hostname.includes('cb01') || window.location.hostname.includes('${streamingDomain.replace('https://', '')}');
 
-      window.open = function() { return null; }; 
+      if (isMainSite) {
+        const tvStyle = document.createElement('style');
+        tvStyle.innerHTML = \`
+          html, body { background-color: #000000 !important; color: #ffffff !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
+          header, footer, #sidebar, .sidebar, .widget-area, #comments, .menu, .logo, .ads, .top-header, .head, #header, .mobile-header, .social-share, .tags, .breadcrumb, form, .speedbar, .berrors { 
+            display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; 
+          }
+          #dle-content, main, .content, article { 
+            width: 100vw !important; max-width: 100% !important; padding: 15px !important; margin: 0 auto !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; align-items: center !important;
+          }
+          
+          .short { margin-bottom: 30px !important; text-align: center !important; width: 100% !important; max-width: 500px !important; background: #111 !important; padding: 15px !important; border-radius: 12px !important; }
+          .short img { transform: scale(1.05) !important; border-radius: 8px !important; margin-bottom: 15px !important; max-width: 100% !important; height: auto !important; }
+          .story-heading { font-size: 24px !important; margin-top: 15px !important; font-family: sans-serif !important; text-align: center; }
+          .story-heading a { color: #ffffff !important; text-decoration: none !important; }
+          
+          /* STILE PREMIUM PER LE SERIE TV */
+          .su-spoiler { margin-bottom: 12px !important; width: 100% !important; max-width: 600px !important; border-radius: 8px !important; overflow: hidden !important; }
+          .su-spoiler-title { background-color: #1A1A1A !important; color: #E50914 !important; padding: 18px !important; font-weight: bold !important; font-size: 18px !important; border: 1px solid #333 !important; text-align: center !important; }
+          .su-spoiler-content { background-color: #0A0A0A !important; padding: 15px !important; display: flex !important; flex-wrap: wrap !important; justify-content: center !important; gap: 10px !important; }
+          .su-spoiler-content a, .content a[target="_blank"] { 
+              display: inline-block !important; background-color: #333 !important; color: white !important; padding: 12px 20px !important; border-radius: 6px !important; text-decoration: none !important; font-weight: bold !important; font-size: 14px !important; text-align: center !important;
+          }
+          
+          iframe#iFrameResizer0, iframe, .video-container {
+            width: 100% !important; max-width: 900px !important; aspect-ratio: 16 / 9 !important; height: auto !important; border-radius: 10px !important; border: none !important; margin: 20px 0 !important; background-color: #111 !important;
+          }
+        \`;
+        document.documentElement.appendChild(tvStyle); 
 
+        document.addEventListener('click', function(e) {
+          let target = e.target.closest('a');
+          if (target && target.target === '_blank') {
+            target.target = '_self';
+          }
+        }, true);
+
+        setInterval(() => {
+          document.querySelectorAll('img').forEach(img => {
+              let src = (img.src || '').toLowerCase();
+              let alt = (img.alt || '').toLowerCase();
+              if (src.includes('download') || src.includes('4k') || src.includes('streaming') || src.includes('banner') || alt.includes('download') || alt.includes('4k')) {
+                  img.style.display = 'none';
+                  if(img.parentElement && img.parentElement.tagName === 'A') {
+                      img.parentElement.style.display = 'none';
+                  }
+              }
+          });
+
+          document.querySelectorAll('a, p, span, b, strong').forEach(el => {
+            const txt = (el.textContent || '').toLowerCase();
+            if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis') || txt.includes('l\\'indirizzo ufficiale') || txt.includes('cerca su cb01') || txt.includes('risultati di ricerca')) {
+              el.style.display = 'none';
+            }
+          });
+        }, 500);
+      }
+
+      // PONTE RADIO E PLAYER (Sempre Attivo)
       window.addEventListener('message', function(e) {
         if (e.data && e.data.type === 'TIME_UPDATE') {
           try { window.ReactNativeWebView.postMessage(JSON.stringify(e.data)); } catch(err){}
         }
       });
-
-      setInterval(() => {
-        document.querySelectorAll('div').forEach(el => {
-          const style = window.getComputedStyle(el);
-          if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex) > 50) {
-            if (!el.contains(document.querySelector('iframe')) && !el.contains(document.querySelector('video'))) el.remove();
-          }
-        });
-
-        document.querySelectorAll('a, p, span, b, strong').forEach(el => {
-          const txt = (el.textContent || '').toLowerCase();
-          if (txt.includes('cliccaci per') || txt.includes('scarica download') || txt.includes('hd/4k gratis') || txt.includes('l\\'indirizzo ufficiale') || txt.includes('cerca su cb01') || txt.includes('film streaming') || txt.includes('risultati di ricerca')) {
-            el.style.display = 'none';
-          }
-        });
-      }, 500);
 
       let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
@@ -454,6 +479,9 @@ export default function App() {
       function attachToVideo(v) {
         if (!v || v.dataset.hooked) return;
         v.dataset.hooked = "true"; 
+        
+        if (!isMainSite) { v.play().catch(e=>{}); }
+
         const trySeek = () => {
           if (!hasSeeked && v.readyState >= 1) {
             if (Math.abs(v.currentTime - initialSavedTime) > 5) { 
@@ -568,7 +596,6 @@ export default function App() {
         </Modal>
       )}
 
-      {/* 🔴 HEADER TRASPARENTE: Solo Logo e Ricerca 🔴 */}
       {!targetUrl && (
         <View style={styles.floatingHeader}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 15 }}>
@@ -587,7 +614,6 @@ export default function App() {
 
       {!targetUrl ? (
         <ScrollView style={{flex: 1}} contentContainerStyle={{ paddingTop: 90 }} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
-          {/* 🔴 MENU SPOSTATO QUI: Sotto l'header fluttuante, sopra il carosello 🔴 */}
           <View style={{ backgroundColor: '#000', paddingBottom: 10 }}>
             <View style={styles.mediaToggleContainer}>
               <TouchableOpacity style={[styles.mediaToggleBtn, mediaType === 'movie' && styles.mediaToggleBtnActive]} onPress={() => { setMediaType('movie'); setSelectedGenre(null); }}>
@@ -615,7 +641,7 @@ export default function App() {
                 <View style={styles.heroContainer}>
                   <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={handleHeroScroll}>
                     {heroItems.map((item, index) => (
-                      <View key={item.id} style={{ width: screenWidth, height: screenHeight * 0.60, backgroundColor: '#000' }}>
+                      <View key={item.id} style={{ width: screenWidth, height: screenHeight * 0.65, backgroundColor: '#000' }}>
                         
                         <Image source={{ uri: BACKDROP_URL + item.backdrop_path }} style={[StyleSheet.absoluteFill, { opacity: showTrailer && activeHeroIndex === index ? 0 : 1 }]} />
                         
@@ -685,6 +711,7 @@ export default function App() {
             </>
           ) : (
             <View style={styles.searchGrid}>
+              <View style={{height: 150}} /> 
               <Text style={styles.rowTitle}>Risultati per: {searchQuery}</Text>
               <View style={styles.grid}>
                 {sections.searchResults.map(m => (
@@ -716,7 +743,10 @@ export default function App() {
 
             <WebView 
               ref={webViewRef}
-              // 🔴 RIMOSSO onLoadStart: Il caricamento dipende SOLO dal nostro timer!
+              // Riattiviamo onLoadEnd per spegnere la rotella quando la pagina è carica
+              onLoadStart={() => setIsWebViewLoading(true)}
+              onLoadEnd={() => setIsWebViewLoading(false)}
+              mixedContentMode="always"
               source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
               userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
               sharedCookiesEnabled={true} thirdPartyCookiesEnabled={true} 
@@ -788,12 +818,10 @@ const styles = StyleSheet.create({
   splash: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   splashLetter: { color: '#E50914', fontSize: 50, fontWeight: '900', marginHorizontal: -1 }, 
   
-  // HEADER FLUTTUANTE: Solo Logo e Ricerca
   floatingHeader: { position: 'absolute', top: 0, width: '100%', zIndex: 100, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 40, backgroundColor: 'rgba(0,0,0,0.6)' },
   logo: { color: '#E50914', fontSize: 28, fontWeight: '900', letterSpacing: -1, textShadowColor: 'black', textShadowRadius: 10 },
   searchBar: { backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', padding: 8, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   
-  // MENU FILM E SERIE: Spostato giù nel normale flusso
   mediaToggleContainer: { flexDirection: 'row', paddingHorizontal: 15, marginBottom: 15 },
   mediaToggleBtn: { marginRight: 20, paddingBottom: 5 },
   mediaToggleBtnActive: { borderBottomWidth: 2, borderBottomColor: '#E50914' },
