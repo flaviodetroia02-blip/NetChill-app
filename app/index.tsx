@@ -10,8 +10,8 @@ const BASE_IMAGE_URL = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_URL = "https://image.tmdb.org/t/p/original";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window'); 
 
-// VERSIONE 35 - FIX ERRORE GLOWANIM E STABILITÀ GENERALE
-const APP_VERSION_CODE = 35; 
+// VERSIONE 36 - FIX SCHERMO NERO SERIE TV
+const APP_VERSION_CODE = 36; 
 
 const GITHUB_RAW_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/link.txt";
 const GITHUB_UPDATE_LINK = "https://raw.githubusercontent.com/flaviodetroia02-blip/NetChill-app/main/update.json";
@@ -68,7 +68,11 @@ export default function App() {
   const currentMovieRef = useRef(null);
   const historyRef = useRef([]);
 
-  // --- ANIMAZIONI SPLASH SCREEN (Re-inserite) ---
+  // --- FIX 3: ref separata per il progress di riproduzione ---
+  // Evita il problema di currentMovie stale nel dynamicJS al primo render
+  const playProgressRef = useRef(0);
+
+  // --- ANIMAZIONI SPLASH SCREEN ---
   const splashOpacity = useRef(new Animated.Value(1)).current; 
   const globalZoom = useRef(new Animated.Value(1)).current; 
   const glowAnim = useRef(new Animated.Value(0)).current; 
@@ -309,15 +313,19 @@ export default function App() {
       await AsyncStorage.setItem(`@continue_watching_${activeProfile.id}`, JSON.stringify(updatedList));
       setCurrentMovie(newItem);
 
+      // --- FIX 3: aggiorna la ref del progress PRIMA di navigare ---
+      // così dynamicJS legge sempre il valore corretto anche al primo render
+      playProgressRef.current = progressToSave;
+
       const safeDomain = streamingDomain && streamingDomain.startsWith('http') ? streamingDomain : 'https://cineblog001.bar';
       const cleanTitle = (item.title || item.name).replace(/[^a-zA-Z0-9 ]/g, " ").trim();
       const searchUrl = `${safeDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanTitle)}`;
       const finalUrl = lastUrlToSave ? lastUrlToSave : searchUrl;
       
       setTargetUrl(finalUrl);
+      // --- FIX 1: rimosso setTimeout che causava conflitti con onLoadStart/onLoadEnd ---
+      // Lo spinner viene ora gestito esclusivamente dagli eventi del WebView
       setIsWebViewLoading(true);
-      // Fallback timer se la pagina fosse lentissima, ma onLoadEnd ora spegnerà lo spinner
-      setTimeout(() => { setIsWebViewLoading(false); }, 4000); 
 
     } catch (e) {}
   };
@@ -431,9 +439,46 @@ export default function App() {
           .su-spoiler-content a, .content a[target="_blank"] { 
               display: inline-block !important; background-color: #333 !important; color: white !important; padding: 12px 20px !important; border-radius: 6px !important; text-decoration: none !important; font-weight: bold !important; font-size: 14px !important; text-align: center !important;
           }
-          
-          iframe#iFrameResizer0, iframe, .video-container {
-            width: 100% !important; max-width: 900px !important; aspect-ratio: 16 / 9 !important; height: auto !important; border-radius: 10px !important; border: none !important; margin: 20px 0 !important; background-color: #111 !important;
+
+          /* --- FIX 2: CSS IFRAME PLAYER CORRETTO ---                      */
+          /* Non tocchiamo gli iframe video con src esterno (player reali)   */
+          /* Applichiamo dimensioni solo ai wrapper generici della pagina     */
+          .video-container, div[id*="player"], div[class*="player"] {
+            width: 100% !important;
+            max-width: 900px !important;
+            min-height: 200px !important;
+            aspect-ratio: 16 / 9 !important;
+            border-radius: 10px !important;
+            margin: 20px 0 !important;
+            background-color: #111 !important;
+          }
+          /* Iframe dei player video veri (embed, stream, ecc.) */
+          iframe[src*="player"],
+          iframe[src*="embed"],
+          iframe[src*="stream"],
+          iframe[src*="watch"],
+          iframe[src*="video"],
+          iframe#iFrameResizer0 {
+            width: 100% !important;
+            min-height: 220px !important;
+            aspect-ratio: 16 / 9 !important;
+            height: auto !important;
+            border: none !important;
+            border-radius: 10px !important;
+            margin: 20px 0 !important;
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+          }
+          /* Iframe generici senza src riconoscibile: dimensioni sicure */
+          iframe:not([src*="player"]):not([src*="embed"]):not([src*="stream"]):not([src*="watch"]):not([src*="video"]):not([id="iFrameResizer0"]) {
+            width: 100% !important;
+            min-height: 200px !important;
+            aspect-ratio: 16 / 9 !important;
+            height: auto !important;
+            border: none !important;
+            border-radius: 10px !important;
+            margin: 20px 0 !important;
           }
         \`;
         document.documentElement.appendChild(tvStyle); 
@@ -473,7 +518,9 @@ export default function App() {
         }
       });
 
-      let initialSavedTime = parseFloat("${currentMovie?.progress || 0}");
+      // --- FIX 3: usa playProgressRef.current invece di currentMovie?.progress ---
+      // In questo modo il valore è sempre aggiornato prima che il WebView si monti
+      let initialSavedTime = parseFloat("${playProgressRef.current || 0}");
       let currentUrl = location.href; let hasSeeked = (initialSavedTime < 5); let lastSaved = 0;
 
       function attachToVideo(v) {
@@ -743,9 +790,13 @@ export default function App() {
 
             <WebView 
               ref={webViewRef}
-              // Riattiviamo onLoadEnd per spegnere la rotella quando la pagina è carica
+              // --- FIX 1: gestione corretta dello spinner ---
+              // onLoadStart/onLoadEnd/onError/onHttpError sono le uniche sorgenti
+              // di verità per lo stato di caricamento. Nessun setTimeout.
               onLoadStart={() => setIsWebViewLoading(true)}
               onLoadEnd={() => setIsWebViewLoading(false)}
+              onError={() => setIsWebViewLoading(false)}
+              onHttpError={() => setIsWebViewLoading(false)}
               mixedContentMode="always"
               source={{ uri: targetUrl, headers: { 'Referer': streamingDomain } }}
               userAgent="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
